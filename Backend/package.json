@@ -1,0 +1,21 @@
+{
+  "name": "friday-realtime-session-service",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "configure": "node service-manager.mjs configure",
+    "configure:gui": "node service-manager.mjs configure-gui",
+    "start": "node service-manager.mjs start",
+    "start:env": "node server.mjs",
+    "start:proxy": "node service-manager.mjs start --proxy",
+    "doctor": "node service-manager.mjs doctor",
+    "doctor:env": "node service-manager.mjs doctor --env",
+    "status": "node service-manager.mjs status",
+    "forget-key": "node service-manager.mjs forget-key",
+    "test": "node --test server.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

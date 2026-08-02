@@ -1,0 +1,94 @@
+name: Bug 报告
+description: 提交可复现的错误、回归或安全边界问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请优先提供可复现证据，并区分自动检查结果与真实 Mac 验收结果。不要附带 API Key、完整录音、截图或转写等敏感内容。
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响区域
+      options:
+        - Dictate
+        - Talk
+        - Agent / Work
+        - Accessibility / Hotkey
+        - Audio / Screen Capture
+        - Backend
+        - UI / Documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: 实际行为
+      description: 发生了什么？请使用可观察事实，不要把推测当作根因。
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: macOS、Friday 构建、目标应用、输入设备、Mock/Live 模式等。
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 证据
+      description: 可附脱敏日志、测试名称、截图位置或源码引用。
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: 是否为回归
+      options:
+        - 不确定
+        - 是，之前可以正常工作
+        - 否，从未正常工作
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: 风险与影响
+      options:
+        - label: 可能误写、丢失或泄露用户内容
+        - label: 可能产生非预期 API 费用
+        - label: 涉及权限、录音、截图或外部副作用
+        - label: 阻断核心 Dictate / Talk 流程
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: 提交确认
+      options:
+        - label: 我已移除凭证和不必要的用户敏感内容
+          required: true

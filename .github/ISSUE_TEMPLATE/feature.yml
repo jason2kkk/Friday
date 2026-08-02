@@ -1,0 +1,85 @@
+name: 功能需求
+description: 为新的用户能力或现有行为调整定义问题、范围和验收条件
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        一个 Issue 只描述一个可独立验收的用户结果。涉及隐私、权限、费用或外部副作用时，请明确写出。
+
+  - type: dropdown
+    id: product_layer
+    attributes:
+      label: 产品层级
+      options:
+        - Dictate
+        - Talk
+        - Agent / Work
+        - Platform / Shared
+        - Documentation / Engineering
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 用户问题
+      description: 当前用户遇到了什么问题，现有行为和期望结果分别是什么？
+      placeholder: 描述问题，不要先写实现方案。
+    validations:
+      required: true
+
+  - type: textarea
+    id: user_story
+    attributes:
+      label: 用户故事
+      description: 使用“作为……我希望……以便……”格式。
+      placeholder: 作为……，我希望……，以便……
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收条件
+      description: 使用可观察、可测试的条件；推荐 Given / When / Then。
+      placeholder: |
+        Given ...
+        When ...
+        Then ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 范围与非目标
+      description: 明确本次包含什么，以及刻意不做什么。
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 证据与参考
+      description: 可附源码位置、复现记录、截图或官方资料；不要上传敏感用户数据。
+
+  - type: checkboxes
+    id: risk
+    attributes:
+      label: 风险检查
+      options:
+        - label: 涉及麦克风、屏幕、Accessibility 或其他系统权限
+        - label: 涉及 API 费用、模型或供应商变化
+        - label: 涉及用户内容保存、日志或隐私边界
+        - label: 涉及发送、删除、购买、提交或其他外部副作用
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: 提交确认
+      options:
+        - label: 我确认该 Issue 只包含一个可独立验收的结果
+          required: true

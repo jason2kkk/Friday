@@ -1,0 +1,52 @@
+[
+  {
+    "name": "question remains a question",
+    "modelOutput": "How do we fix this?",
+    "expectedText": "How do we fix this?",
+    "usedRawTranscriptFallback": false
+  },
+  {
+    "name": "incomplete speech stays incomplete",
+    "modelOutput": "我觉得这个方案可能还需要",
+    "expectedText": "我觉得这个方案可能还需要",
+    "usedRawTranscriptFallback": false
+  },
+  {
+    "name": "markdown fence is presentation only",
+    "modelOutput": "```text\n项目会在周五交付。\n```",
+    "expectedText": "项目会在周五交付。",
+    "usedRawTranscriptFallback": false
+  },
+  {
+    "name": "known confirmation wrapper recovers quoted speech",
+    "modelOutput": "Did you mean to say, “Hey, just wanted to confirm”? Let me know what comes next.",
+    "expectedText": "Hey, just wanted to confirm",
+    "usedRawTranscriptFallback": false
+  },
+  {
+    "name": "readiness chatter without transcript is rejected",
+    "modelOutput": "Sure, please go ahead and start speaking. I'll be ready to transcribe everything accurately.",
+    "expectedText": null,
+    "usedRawTranscriptFallback": false
+  },
+  {
+    "name": "readiness chatter falls back to raw transcript",
+    "modelOutput": "Sure, please go ahead and start speaking. I'll be ready to transcribe everything accurately.",
+    "rawTranscript": "项目会在周五交付",
+    "expectedText": "项目会在周五交付",
+    "usedRawTranscriptFallback": true
+  },
+  {
+    "name": "empty model output falls back to raw transcript",
+    "modelOutput": "   ",
+    "rawTranscript": "周四下午三点",
+    "expectedText": "周四下午三点",
+    "usedRawTranscriptFallback": true
+  },
+  {
+    "name": "no speech marker is rejected",
+    "modelOutput": "<FRIDAY_NO_SPEECH>",
+    "expectedText": null,
+    "usedRawTranscriptFallback": false
+  }
+]

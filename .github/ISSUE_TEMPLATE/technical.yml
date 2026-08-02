@@ -1,0 +1,62 @@
+name: 技术任务
+description: 管理重构、测试、架构、工程化或文档维护任务
+title: "[Tech] "
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: 任务类型
+      options:
+        - 架构调整
+        - 重构
+        - 测试与验收
+        - 构建与工程配置
+        - 文档与规范
+        - 安全与隐私加固
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: 当前证据
+      description: 说明当前源码、配置、测试或可复现行为，不使用“看起来应该”作为依据。
+    validations:
+      required: true
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: 工程目标
+      description: 说明完成后可以观察到的技术结果。
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 范围与非目标
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: 验证信号
+      description: 列出静态检查、单测、构建或真机验收信号；不能把静态检查称为完整构建。
+    validations:
+      required: true
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: 风险与回滚
+      description: 说明模块边界、兼容性、隐私、费用和可撤销方案。
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: 提交确认
+      options:
+        - label: 我确认该任务可以由一个独立 PR 审查和回滚
+          required: true
