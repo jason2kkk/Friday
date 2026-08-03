@@ -1,5 +1,5 @@
 // 功能：提供仅监听本机的 Realtime 会话入口，让 Friday 使用短期凭证连接 OpenAI。
-// 职责：分离本地存活与模型就绪检查，暴露凭证和 Work 接口，并管理会话配置、签发保护、账单状态和错误脱敏。
+// 职责：分离本地存活与模型就绪检查，暴露凭证、Work 与可撤销自动写入工具，并管理会话配置、签发保护、账单状态和错误脱敏。
 // 边界：长期 API Key 只存在于本进程；服务不接收音频或用户正文，存活与就绪检查都不创建 Realtime 会话。
 
 import { createServer } from "node:http";
@@ -17,7 +17,7 @@ const serviceHost = "127.0.0.1";
 const servicePort = integerEnvironment("FRIDAY_SESSION_PORT", 8787);
 const realtimeModel = process.env.FRIDAY_REALTIME_MODEL || "gpt-realtime-2.1";
 const talkModel = process.env.FRIDAY_TALK_MODEL || "gpt-realtime-2.1";
-const talkPromptVersion = "2026-08-03.turn-taking-v4";
+const talkPromptVersion = "2026-08-03.focused-write-v2";
 const dictationReasoningEffort = choiceEnvironment(
   "FRIDAY_DICTATION_REASONING_EFFORT",
   "minimal",
@@ -189,7 +189,9 @@ server.listen(servicePort, serviceHost, () => {
     `Input transcription: ${inputTranscriptionModel || "disabled (no additional transcription model)"}`
   );
   console.log(`Environment proxy configured: ${proxyConfigured ? "yes" : "no"}`);
-  console.log("Agent mode: mock read-only (no external actions)");
+  console.log(
+    "Agent mode: automatic reversible input write; background Work remains mock read-only"
+  );
 });
 
 async function createClientCredential(mode = "dictation") {
@@ -314,7 +316,9 @@ async function createClientCredential(mode = "dictation") {
     response_creation: mode === "talk" ? "client" : null,
     input_transcription_enabled: Boolean(inputTranscriptionModel),
     input_transcription_model: inputTranscriptionModel,
-    agent_tools_enabled: mode === "talk" && Boolean(inputTranscriptionModel)
+    agent_tools_enabled: mode === "talk",
+    work_tools_enabled: mode === "talk" && Boolean(inputTranscriptionModel),
+    automatic_focused_write_enabled: mode === "talk"
   };
 }
 
@@ -381,8 +385,10 @@ function serviceStatusPayload({ status, upstreamStatus, budget, error = null }) 
     proxy_configured: proxyConfigured,
     input_transcription_enabled: Boolean(inputTranscriptionModel),
     input_transcription_model: inputTranscriptionModel,
-    agent_tools_enabled: Boolean(inputTranscriptionModel),
-    agent_mode: "mock_read_only",
+    agent_tools_enabled: true,
+    work_tools_enabled: Boolean(inputTranscriptionModel),
+    automatic_focused_write_enabled: true,
+    agent_mode: "automatic_reversible_write",
     sessions_issued: budget.totalCount,
     burst_protection_enabled: true,
     account_balance_readable: false,
@@ -544,6 +550,22 @@ const talkTools = [
   },
   {
     type: "function",
+    name: "write_focused_input",
+    description: "仅当用户明确要求把一段确定文字写入、放入或填入当前输入框时调用。该工具会让本地 ActionExecutor 立即复验启动语音 Agent 时锁定的非密码输入框，并自动执行一次可通过 Command-Z 撤销的本地写入。不得用于发送消息、发送邮件、提交表单、发布、购买、删除、密码输入、猜测目标或任何不可逆操作。工具返回 succeeded 前不得声称已经写入；返回 unknown 时必须请用户查看原输入框。",
+    parameters: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "将要直接写入锁定输入框的完整最终文字。忠实保留用户原意，不补充未提供的事实；需要整理时先完成整理，再把完整结果放在这里。"
+        }
+      },
+      required: ["text"],
+      additionalProperties: false
+    }
+  },
+  {
+    type: "function",
     name: "submit_work",
     description: "仅用于内部 Alpha 创建等待用户确认的 WorkDraft。只有用户明确要求‘创建后台测试任务’或‘验证后台任务机制’时才调用。调用后不会创建正式 Work；必须忠实复述返回的 objective，并请用户明确说‘确认提交’或‘取消’。当前执行器是只读 Mock，不会查看或修改真实文件、应用、网页、消息或账号；不得用它代替真实操作，也不得用于闲聊、问答、翻译、解释、总结或屏幕选区理解。",
     parameters: {
@@ -620,9 +642,13 @@ const talkTools = [
   }
 ];
 
+const toolsWithoutFinalASR = new Set([
+  "wait_for_user",
+  "write_focused_input"
+]);
 const activeTalkTools = inputTranscriptionModel
   ? talkTools
-  : talkTools.filter(tool => tool.name === "wait_for_user");
+  : talkTools.filter(tool => toolsWithoutFinalASR.has(tool.name));
 
 const talkInstructions = `
 # 角色与目标
@@ -640,10 +666,12 @@ const talkInstructions = `
 # 意图路由
 1. 闲聊、知识问答、解释、翻译、总结、改写，以及屏幕选区理解：直接回答，不调用工具。
 2. 请求缺少必要信息或语音含糊：只问一个简短澄清问题，不猜测，不调用工具。
-3. 只有用户明确要求“创建后台测试任务”或“验证后台任务机制”时，才调用 submit_work 创建草稿；首次请求绝不能直接说任务已经提交。
-4. 用户要求真实操作文件、应用、邮件、网页、消息或账号时，当前没有可用的真实执行工具。诚实说明暂时不能实际执行，并提供最接近的可用帮助，例如起草内容或说明步骤；不要提交 Mock Work 冒充执行。
-5. submit_work 返回 awaiting_confirmation 后，忠实复述 objective，并要求用户明确说“确认提交”或“取消”。只有下一轮用户清楚说出“确认提交”时才调用 confirm_work；用户明确取消时调用 discard_work_draft。
-6. 用户询问本次 Talk 中已提交测试任务的进度时调用 get_work_status；用户明确要求停止时调用 cancel_work。
+3. 用户明确要求把一段确定文字写入、放入或填入当前输入框时，调用 write_focused_input。把完整最终文字放入 text；本地执行器会复验启动对话时锁定的非密码输入框，并自动执行一次可撤销写入。
+4. 写入请求同时包含“发送、提交、发布、购买”等外部副作用时，不调用输入框写入工具；说明当前只能准备文字，不能完成外部动作。
+5. 只有用户明确要求“创建后台测试任务”或“验证后台任务机制”时，才调用 submit_work 创建草稿；首次请求绝不能直接说任务已经提交。
+6. 用户要求操作文件、邮件、网页、消息或账号中的其他真实动作时，当前没有可用工具。诚实说明暂时不能实际执行，并提供最接近的可用帮助；不要提交 Mock Work 冒充执行。
+7. submit_work 返回 awaiting_confirmation 后，忠实复述 objective，并要求用户明确说“确认提交”或“取消”。只有下一轮用户清楚说出“确认提交”时才调用 confirm_work；用户明确取消时调用 discard_work_draft。
+8. 用户询问本次 Talk 中已提交测试任务的进度时调用 get_work_status；用户明确要求停止时调用 cancel_work。
 
 # 对话方式
 - 直接、自然地回应，不播报“收听、思考、处理、输出”等阶段。
@@ -668,6 +696,12 @@ const talkInstructions = `
 - 除非用户明确要求诊断，不透露 Work ID、Provider、队列、Session、工具名或内部路由。
 - 当前执行器只是只读 Mock，不会访问或改变任何外部内容。严格按返回结果描述，不能暗示真实操作已经发生。
 
+# 当前输入框写入
+- write_focused_input 会在本地复验原目标后直接写入，不显示确认界面，也不要求用户再说“好的”或“确认”。只有用户已经明确表达写入、放入或填入意图时才调用。
+- 如果用户只要求起草、改写、翻译、总结或解释内容，没有要求写入输入框，则直接回答，不调用该工具。
+- 工具返回 failed 时说明原目标没有被修改；返回 unknown 时说明事件已发送但无法复验，请用户查看输入框；只有 succeeded 才能明确说已经写入。
+- 写入成功仍不代表消息、邮件或表单已经发送。不得声称已发送、已提交或已发布。
+
 # 模糊音频
 - 进入本会话的音频已经经过本地近场人声过滤；只要听到持续人声、可辨认词语或疑似请求，优先把它当作用户在对 Friday 说话。
 - 持续或完整的人声绝不能因为意图不明确、称呼不明确、句子残缺、口音或识别不确定而静默结束。能理解就直接回答，不能理解就只问一个简短澄清问题。
@@ -676,6 +710,8 @@ const talkInstructions = `
 
 # 例子
 - 用户：“帮我翻译框选的英文。” -> 直接用中文给出译文，不提交 Work。
+- 用户：“把‘明天下午三点开会’写到当前输入框。” -> 调用 write_focused_input，等待本地执行回执。
+- 用户：“把这段话写好并直接发给张三。” -> 不调用写入工具；说明可以起草，但不能发送。
 - 用户：“帮我给张三发一封邮件。” -> 说明目前不能实际发送，但可以先起草邮件，不提交 Work。
 - 用户：“创建一个后台测试任务，验证对话不会被阻塞。” -> 调用 submit_work，复述返回的目标并询问是否确认提交。
 - 用户在复述后：“确认提交。” -> 调用 confirm_work。
@@ -686,5 +722,5 @@ const talkInstructions = `
 # 边界
 - 只使用当前工具列表中真实存在的工具，不发明、模拟或重命名工具。
 - 只有相关工具成功后才能说动作已完成。
-- 在未来收到经过验证的 ActionReceipt 之前，不得声称已修改文件、发送消息或控制 Mac。
+- 在收到本地 ActionReceipt 之前，不得声称已写入输入框；当前没有任何工具可以修改文件、发送消息或控制其他 Mac 功能。
 `.trim();

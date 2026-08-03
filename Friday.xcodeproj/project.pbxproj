@@ -42,6 +42,11 @@
 		A10000000000000000000036 /* ConversationDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000039 /* ConversationDiagnostics.swift */; };
 		A10000000000000000000037 /* ConversationCoordinatorDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000040 /* ConversationCoordinatorDiagnostics.swift */; };
 		A10000000000000000000038 /* ConversationCoordinatorEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000041 /* ConversationCoordinatorEvents.swift */; };
+		B10000000000000000000001 /* ActionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* ActionModels.swift */; };
+		B10000000000000000000002 /* ConversationActionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* ConversationActionBridge.swift */; };
+		B10000000000000000000004 /* FocusedInputActionExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* FocusedInputActionExecutor.swift */; };
+		B10000000000000000000005 /* AgentActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000005 /* AgentActionTests.swift */; };
+		B10000000000000000000006 /* AgentActionFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000006 /* AgentActionFeedback.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -93,6 +98,11 @@
 		A20000000000000000000039 /* ConversationDiagnostics.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationDiagnostics.swift; sourceTree = "<group>"; };
 		A20000000000000000000040 /* ConversationCoordinatorDiagnostics.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationCoordinatorDiagnostics.swift; sourceTree = "<group>"; };
 		A20000000000000000000041 /* ConversationCoordinatorEvents.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationCoordinatorEvents.swift; sourceTree = "<group>"; };
+		B20000000000000000000001 /* ActionModels.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ActionModels.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 /* ConversationActionBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationActionBridge.swift; sourceTree = "<group>"; };
+		B20000000000000000000004 /* FocusedInputActionExecutor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = FocusedInputActionExecutor.swift; sourceTree = "<group>"; };
+		B20000000000000000000005 /* AgentActionTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AgentActionTests.swift; sourceTree = "<group>"; };
+		B20000000000000000000006 /* AgentActionFeedback.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AgentActionFeedback.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -155,6 +165,7 @@
 				A20000000000000000000018 /* WakeWordService.swift */,
 				A20000000000000000000021 /* ConversationAudioService.swift */,
 				A20000000000000000000033 /* VoiceProcessingAudioUnit.swift */,
+				B20000000000000000000004 /* FocusedInputActionExecutor.swift */,
 				A20000000000000000000024 /* ScreenRegionCaptureService.swift */,
 			);
 			path = Platform;
@@ -177,6 +188,7 @@
 		A40000000000000000000006 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				B20000000000000000000006 /* AgentActionFeedback.swift */,
 				A20000000000000000000009 /* InputOverlay.swift */,
 				A20000000000000000000016 /* InputOverlayAtmosphere.swift */,
 				A20000000000000000000022 /* ConversationCoordinator.swift */,
@@ -194,6 +206,7 @@
 			children = (
 				A20000000000000000000012 /* DictationProviderTests.swift */,
 				A20000000000000000000026 /* TalkInteractionTests.swift */,
+				B20000000000000000000005 /* AgentActionTests.swift */,
 				A20000000000000000000017 /* DictationQualityCases.json */,
 			);
 			path = FridayTests;
@@ -204,6 +217,7 @@
 			children = (
 				A40000000000000000000009 /* Conversation */,
 				A40000000000000000000010 /* Work */,
+				B40000000000000000000001 /* Action */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";
@@ -227,6 +241,15 @@
 				A20000000000000000000038 /* WorkDraft.swift */,
 			);
 			path = Work;
+			sourceTree = "<group>";
+		};
+		B40000000000000000000001 /* Action */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000001 /* ActionModels.swift */,
+				B20000000000000000000002 /* ConversationActionBridge.swift */,
+			);
+			path = Action;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -359,6 +382,10 @@
 				A10000000000000000000036 /* ConversationDiagnostics.swift in Sources */,
 				A10000000000000000000037 /* ConversationCoordinatorDiagnostics.swift in Sources */,
 				A10000000000000000000038 /* ConversationCoordinatorEvents.swift in Sources */,
+				B10000000000000000000001 /* ActionModels.swift in Sources */,
+				B10000000000000000000002 /* ConversationActionBridge.swift in Sources */,
+				B10000000000000000000004 /* FocusedInputActionExecutor.swift in Sources */,
+				B10000000000000000000006 /* AgentActionFeedback.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -368,6 +395,7 @@
 			files = (
 				A10000000000000000000010 /* DictationProviderTests.swift in Sources */,
 				A10000000000000000000023 /* TalkInteractionTests.swift in Sources */,
+				B10000000000000000000005 /* AgentActionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
