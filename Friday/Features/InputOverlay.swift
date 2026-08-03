@@ -1,5 +1,5 @@
-// 功能：通过不抢焦点的顶部灵动岛持续展示 Dictate、Talk、动作确认、处理结果和恢复反馈。
-// 职责：定义浮层状态模型、动作确认展示状态、原生玻璃窗口层级、NSPanel 生命周期与 SwiftUI 内容，并处理展开收起和用户事件。
+// 功能：通过不抢焦点的顶部灵动岛持续展示 Dictate、Talk、处理结果和恢复反馈。
+// 职责：定义浮层状态模型、原生玻璃窗口层级、NSPanel 生命周期与 SwiftUI 内容，并处理展开收起和用户事件。
 // 边界：不采集音频、不调用模型、不查找输入目标；所有业务操作均通过模型回调交还应用工作流。
 
 import AppKit
@@ -31,22 +31,6 @@ enum InputOverlayPhase: Equatable {
 enum InputOverlayExpandedPage: Equatable {
     case dashboard
     case settings
-}
-
-enum ActionConfirmationPresentationState: Equatable {
-    case pending
-    case executing
-    case failed(String)
-    case unknown(String)
-}
-
-struct ActionConfirmationPresentation: Equatable {
-    let permissionID: ActionPermissionID
-    let actionID: ActionID
-    let targetApplication: String
-    let targetRole: String
-    let preview: String
-    var state: ActionConfirmationPresentationState
 }
 
 /// 功能：根据当前屏幕的刘海和菜单栏计算灵动岛尺寸。
@@ -117,7 +101,6 @@ final class InputOverlayModel: ObservableObject {
     @Published var isDashboardExpanded = false
     @Published var expandedPage: InputOverlayExpandedPage = .dashboard
     @Published var dashboard = IslandDashboardSnapshot()
-    @Published var actionConfirmation: ActionConfirmationPresentation?
 
     var isExpanded: Bool {
         if isDashboardExpanded { return true }
@@ -162,9 +145,6 @@ final class InputOverlayModel: ObservableObject {
     var onCollapseDashboard: (() -> Void)?
     var onPresentSettings: (() -> Void)?
     var onPresentDashboard: (() -> Void)?
-    var onAllowAction: (() -> Void)?
-    var onRejectAction: (() -> Void)?
-    var onDismissActionResult: (() -> Void)?
 }
 
 private final class InputOverlayPanel: NSPanel {
@@ -408,9 +388,7 @@ final class InputOverlayController {
             break
         default:
             model.expandedPage = .dashboard
-            if model.actionConfirmation == nil {
-                model.isDashboardExpanded = false
-            }
+            model.isDashboardExpanded = false
         }
         panel.hasShadow = model.isExpanded
         panel.invalidateShadow()
@@ -502,25 +480,6 @@ final class InputOverlayController {
             } else {
                 show(previousPhase)
             }
-        }
-    }
-
-    func presentActionConfirmation() {
-        if !panel.isVisible {
-            show(.idle)
-        }
-        model.expandedPage = .dashboard
-        if !model.isExpanded {
-            expandDashboard()
-        } else {
-            panel.ignoresMouseEvents = false
-            panel.makeKeyAndOrderFront(nil)
-        }
-    }
-
-    func collapseAfterActionResolution() {
-        if model.isExpanded {
-            collapseDashboard()
         }
     }
 
@@ -717,22 +676,6 @@ final class InputOverlayController {
         model.dashboard = .preview
         switch preview.lowercased() {
         case "dashboard":
-            show(.idle)
-            Task { @MainActor [weak self] in
-                await Task.yield()
-                self?.expandDashboard()
-            }
-        case "action-confirmation":
-            model.actionConfirmation = ActionConfirmationPresentation(
-                permissionID: ActionPermissionID(
-                    "permission_11111111111111111111111111111111"
-                )!,
-                actionID: ActionID("action_22222222222222222222222222222222")!,
-                targetApplication: "TextEdit",
-                targetRole: "文本区域",
-                preview: "您好，项目测试仍在进行中，因此交付时间需要顺延两天。我们会继续推进，并确保在本周五之前完成交付。感谢您的理解。",
-                state: .pending
-            )
             show(.idle)
             Task { @MainActor [weak self] in
                 await Task.yield()

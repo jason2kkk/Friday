@@ -71,13 +71,14 @@ limited to high-confidence silence, brief non-speech noise, or obvious playback
 residue. Sustained or intelligible speech must receive an answer or a short
 clarification; the macOS runtime also overrides a silent tool call when the
 Provider measured a sustained user turn. Talk also always exposes
-`propose_focused_input_write`, which can only send a complete text proposal back
-to the macOS client. The client attaches the input target locked at Talk startup,
-shows a complete visual preview, and executes one local write only after the user
-clicks `写入`. A voice response, tool call, or model-generated confirmation never
-grants permission. This foreground action does not send or submit content and
-does not require final ASR because it has zero side effects before the independent
-visual confirmation.
+`write_focused_input`. It is available only for an explicit request to write a
+complete piece of text into the non-password input target locked at Talk startup.
+The macOS client validates the action policy and original target, then performs
+one local write without a second confirmation. This narrow path does not send,
+submit, publish, purchase, delete, or change permissions; those effects must use
+separate tools and confirmation policies. It does not require final ASR because
+the current action is local, system-undoable, target-bound, and idempotent by Tool
+Call ID.
 
 `submit_work`,
 `confirm_work`, `discard_work_draft`, `get_work_status`, and `cancel_work` are
@@ -162,7 +163,7 @@ npm test
 The test suite uses a local fake OpenAI upstream. It verifies local liveness
 remains responsive while model readiness is bounded, along with Dictate and
 Talk credential payloads, client-owned response creation, the always-available
-visual write proposal, final-ASR-gated background Work tools, semantic VAD and
+reversible input write, final-ASR-gated background Work tools, semantic VAD and
 interruption settings, optional transcription
 configuration, unlimited cumulative issuance, credential-burst protection,
 billing status, Work submission/query/cancellation, and secret redaction without

@@ -69,16 +69,16 @@ test("session service issues credentials without a cumulative cap and tracks loc
   assert.equal(health.body.dictation_reasoning_effort, "minimal");
   assert.equal(health.body.talk_model, "gpt-realtime-2.1");
   assert.equal(health.body.talk_reasoning_effort, "low");
-  assert.equal(health.body.talk_prompt_version, "2026-08-03.focused-write-v1");
+  assert.equal(health.body.talk_prompt_version, "2026-08-03.focused-write-v2");
   assert.equal(health.body.talk_response_creation, "client");
   assert.equal(health.body.sessions_issued, 0);
   assert.equal(health.body.burst_protection_enabled, true);
   assert.equal(health.body.account_balance_readable, false);
   assert.equal(health.body.billing_status, "unknown");
-  assert.equal(health.body.agent_mode, "confirmed_local_write");
+  assert.equal(health.body.agent_mode, "automatic_reversible_write");
   assert.equal(health.body.agent_tools_enabled, true);
   assert.equal(health.body.work_tools_enabled, true);
-  assert.equal(health.body.visual_write_confirmation_enabled, true);
+  assert.equal(health.body.automatic_focused_write_enabled, true);
   assert.equal(health.body.input_transcription_enabled, true);
   assert.equal(health.body.input_transcription_model, "gpt-realtime-whisper");
   assert.equal("daily_sessions_remaining" in health.body, false);
@@ -355,11 +355,11 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.equal(credential.body.vad_eagerness, "high");
   assert.equal(credential.body.reasoning_effort, "low");
   assert.equal(credential.body.max_output_tokens, 640);
-  assert.equal(credential.body.prompt_version, "2026-08-03.focused-write-v1");
+  assert.equal(credential.body.prompt_version, "2026-08-03.focused-write-v2");
   assert.equal(credential.body.response_creation, "client");
   assert.equal(credential.body.agent_tools_enabled, true);
   assert.equal(credential.body.work_tools_enabled, true);
-  assert.equal(credential.body.visual_write_confirmation_enabled, true);
+  assert.equal(credential.body.automatic_focused_write_enabled, true);
   assert.equal(credential.body.input_transcription_enabled, true);
   assert.equal(credential.body.input_transcription_model, "gpt-4o-mini-transcribe");
   assert.equal(credentialBody.session.model, "gpt-realtime-2.1");
@@ -380,7 +380,7 @@ test("talk mode creates a client-controlled audio session with background-noise 
     credentialBody.session.tools.map(tool => tool.name),
     [
       "wait_for_user",
-      "propose_focused_input_write",
+      "write_focused_input",
       "submit_work",
       "confirm_work",
       "discard_work_draft",
@@ -391,8 +391,8 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.match(credentialBody.session.instructions, /简体中文是默认回复语言/);
   assert.match(credentialBody.session.instructions, /不要因为口音、语气词、英文产品名/);
   assert.match(credentialBody.session.instructions, /只有用户明确要求“创建后台测试任务”/);
-  assert.match(credentialBody.session.instructions, /调用 propose_focused_input_write/);
-  assert.match(credentialBody.session.instructions, /不要把语音同意当作权限/);
+  assert.match(credentialBody.session.instructions, /调用 write_focused_input/);
+  assert.match(credentialBody.session.instructions, /不显示确认界面/);
   assert.match(credentialBody.session.instructions, /只有下一轮用户清楚说出“确认提交”/);
   assert.match(credentialBody.session.instructions, /最终用户转写缺失、失败/);
   assert.match(credentialBody.session.instructions, /当前没有可用工具/);
@@ -411,10 +411,10 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.deepEqual(waitForUserTool.parameters.required, []);
 
   const focusedInputWriteTool = credentialBody.session.tools.find(
-    tool => tool.name === "propose_focused_input_write"
+    tool => tool.name === "write_focused_input"
   );
-  assert.match(focusedInputWriteTool.description, /只创建本地 ActionProposal/);
-  assert.match(focusedInputWriteTool.description, /点击‘写入’/);
+  assert.match(focusedInputWriteTool.description, /自动执行一次/);
+  assert.match(focusedInputWriteTool.description, /不得用于发送消息/);
   assert.deepEqual(focusedInputWriteTool.parameters.required, ["text"]);
 
   const submitWorkTool = credentialBody.session.tools.find(
@@ -425,7 +425,7 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.doesNotMatch(submitWorkTool.description, /current information/i);
 });
 
-test("talk keeps visual write proposal but hides Work tools without final ASR", async (t) => {
+test("talk keeps reversible input write but hides Work tools without final ASR", async (t) => {
   let credentialBody = null;
   const upstream = createServer(async (request, response) => {
     if (request.method === "GET" && request.url.startsWith("/v1/models/")) {
@@ -474,10 +474,10 @@ test("talk keeps visual write proposal but hides Work tools without final ASR", 
   assert.equal(credential.body.input_transcription_enabled, false);
   assert.equal(credential.body.agent_tools_enabled, true);
   assert.equal(credential.body.work_tools_enabled, false);
-  assert.equal(credential.body.visual_write_confirmation_enabled, true);
+  assert.equal(credential.body.automatic_focused_write_enabled, true);
   assert.deepEqual(
     credentialBody.session.tools.map(tool => tool.name),
-    ["wait_for_user", "propose_focused_input_write"]
+    ["wait_for_user", "write_focused_input"]
   );
   assert.equal(
     credentialBody.session.audio.input.turn_detection.create_response,

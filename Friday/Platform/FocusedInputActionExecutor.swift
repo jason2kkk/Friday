@@ -1,6 +1,6 @@
-// 功能：执行 Agent 已获一次性许可的当前输入框写入动作，并返回本地可观察的 ActionReceipt。
-// 职责：锁定会话开始时的 Accessibility 目标、复验目标 revision、调用既有剪贴板写入路径并映射成功、失败或未知结果。
-// 边界：不生成文本、不申请模型会话、不执行发送或提交；目标缺失、变化或不可验证时不猜测其他控件。
+// 功能：执行 Agent 明确限定为自动策略的当前输入框写入动作，并返回本地可观察的 ActionReceipt。
+// 职责：锁定会话开始时的 Accessibility 目标，校验动作风险与目标 revision，调用既有剪贴板写入路径并映射回执。
+// 边界：只执行可撤销本地写入，不生成文本、不执行发送或提交；目标缺失、变化或策略不匹配时不猜测其他控件。
 
 import ApplicationServices
 import Foundation
@@ -51,6 +51,9 @@ final class FocusedInputActionExecutor: LocalActionExecuting {
 
     func execute(_ proposal: ActionProposal) async -> ActionReceipt {
         guard proposal.kind == .writeFocusedInput,
+              proposal.risk == .reversibleLocalWrite,
+              proposal.reversibility == .systemUndo,
+              proposal.executionPolicy == .automaticWhenTargetLocked,
               let lockedTarget,
               proposal.target == lockedTarget.descriptor else {
             return receipt(

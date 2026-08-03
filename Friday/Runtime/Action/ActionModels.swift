@@ -1,6 +1,6 @@
 // 功能：定义 Friday Agent 提议本地动作以及系统执行后返回证据的稳定数据契约。
-// 职责：表达动作身份、目标描述、风险、可撤销性、参数与 ActionReceipt，不包含平台句柄或执行逻辑。
-// 边界：完整写入预览只在本地内存中流转；模型不能用 ActionProposal 代替本地权限决策或执行回执。
+// 职责：表达动作身份、目标描述、风险、自动执行策略、参数与 ActionReceipt，不包含平台句柄或执行逻辑。
+// 边界：自动执行只适用于锁定目标上的可撤销本地写入；外部副作用仍需独立权限策略和执行回执。
 
 import Foundation
 
@@ -54,8 +54,8 @@ enum ActionReversibility: String, Codable, Equatable, Sendable {
     case systemUndo = "system_undo"
 }
 
-enum ActionPermissionRequirement: String, Codable, Equatable, Sendable {
-    case allowOnce = "allow_once"
+enum ActionExecutionPolicy: String, Codable, Equatable, Sendable {
+    case automaticWhenTargetLocked = "automatic_when_target_locked"
 }
 
 struct ActionTargetDescriptor: Codable, Equatable, Sendable {
@@ -74,10 +74,9 @@ struct ActionProposal: Codable, Equatable, Sendable {
     let kind: AgentActionKind
     let target: ActionTargetDescriptor
     let parameters: FocusedInputWriteParameters
-    let preview: String
     let risk: ActionRisk
     let reversibility: ActionReversibility
-    let requiredPermission: ActionPermissionRequirement
+    let executionPolicy: ActionExecutionPolicy
 }
 
 enum ActionReceiptStatus: String, Codable, Equatable, Sendable {

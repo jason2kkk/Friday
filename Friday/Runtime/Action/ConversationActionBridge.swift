@@ -1,63 +1,37 @@
-// 功能：把 Realtime 的输入框写入工具调用转换为本地 ActionProposal、一次性权限等待和结构化工具结果。
-// 职责：校验工具参数、绑定当前锁定目标、协调 Permission Runtime 与 Action Executor，并对重复调用保持幂等。
-// 边界：不直接访问 Accessibility、不记录写入正文、不支持发送提交等外部副作用，也不把模型调用视为用户授权。
+// 功能：把 Realtime 的明确输入框写入工具调用转换为自动执行的本地 ActionProposal 和结构化工具结果。
+// 职责：校验完整文字、绑定当前锁定目标、串行调用 Action Executor，并按 Tool Call ID 缓存结果以避免重复写入。
+// 边界：只自动执行锁定目标上的可撤销本地写入；不记录正文，不支持发送提交等外部副作用，也不把结果未知视为成功。
 
 import Foundation
 
-enum ConversationActionOutcome: Equatable, Sendable {
-    case rejected
-    case cancelled
-    case receipt(ActionReceipt)
-}
-
 @MainActor
 final class ConversationActionBridge {
-    static let focusedInputWriteToolName = "propose_focused_input_write"
+    static let focusedInputWriteToolName = "write_focused_input"
 
-    var onPermissionRequest: ((ActionPermissionRequest) -> Void)?
-    var onExecutionStarted: ((ActionPermissionRequest) -> Void)?
-    var onResolution: ((ActionPermissionRequest, ConversationActionOutcome) -> Void)?
+    var onResolution: ((ActionProposal, ActionReceipt) -> Void)?
 
     private let executor: any LocalActionExecuting
-    private let permissionRuntime: ActionPermissionRuntime
     private var completedOutputs: [ConversationToolCallID: String] = [:]
-    private var pendingCallID: ConversationToolCallID?
+    private var activeCallID: ConversationToolCallID?
+    private var sessionRevision = 0
 
-    init(
-        executor: (any LocalActionExecuting)? = nil,
-        permissionRuntime: ActionPermissionRuntime? = nil
-    ) {
+    init(executor: (any LocalActionExecuting)? = nil) {
         self.executor = executor ?? UnavailableLocalActionExecutor()
-        self.permissionRuntime = permissionRuntime ?? ActionPermissionRuntime()
     }
 
     func beginConversationSession() {
-        permissionRuntime.cancelPendingPermission()
+        sessionRevision += 1
         completedOutputs.removeAll(keepingCapacity: false)
-        pendingCallID = nil
     }
 
     func endConversationSession() {
-        permissionRuntime.cancelPendingPermission()
+        sessionRevision += 1
         executor.clearSessionTarget()
         completedOutputs.removeAll(keepingCapacity: false)
-        pendingCallID = nil
     }
 
     func canResolve(_ toolName: String) -> Bool {
         toolName == Self.focusedInputWriteToolName
-    }
-
-    func respond(
-        permissionID: ActionPermissionID,
-        actionID: ActionID,
-        allow: Bool
-    ) -> Bool {
-        permissionRuntime.respond(
-            permissionID: permissionID,
-            actionID: actionID,
-            decision: allow ? .allowOnce : .reject
-        )
     }
 
     func resolve(_ call: ConversationToolCall) async -> ConversationToolResolution {
@@ -77,12 +51,12 @@ final class ConversationActionBridge {
                 workToObserve: nil
             )
         }
-        guard pendingCallID == nil else {
+        guard activeCallID == nil else {
             return resolution(
                 callID: call.callID,
                 payload: [
                     "status": "busy",
-                    "message": "已有一项写入正在等待用户确认。"
+                    "message": "上一项本地写入仍在执行，请稍后重试。"
                 ]
             )
         }
@@ -104,60 +78,29 @@ final class ConversationActionBridge {
                 kind: .writeFocusedInput,
                 target: target,
                 parameters: FocusedInputWriteParameters(text: text),
-                preview: text,
                 risk: .reversibleLocalWrite,
                 reversibility: .systemUndo,
-                requiredPermission: .allowOnce
+                executionPolicy: .automaticWhenTargetLocked
             )
-            pendingCallID = call.callID
-            var permissionRequest: ActionPermissionRequest?
-            let decision = try await permissionRuntime.requestPermission(
-                for: proposal
-            ) { request in
-                permissionRequest = request
-                onPermissionRequest?(request)
-            }
-            guard let request = permissionRequest else {
-                throw BridgeError.permissionUnavailable
+            let revisionAtStart = sessionRevision
+            activeCallID = call.callID
+            defer {
+                if activeCallID == call.callID {
+                    activeCallID = nil
+                }
             }
 
-            let outcome: ConversationActionOutcome
-            let toolResolution: ConversationToolResolution
-            switch decision {
-            case .allowOnce:
-                onExecutionStarted?(request)
-                let receipt = await executor.execute(proposal)
-                outcome = .receipt(receipt)
-                toolResolution = receiptResolution(callID: call.callID, receipt: receipt)
-            case .reject:
-                outcome = .rejected
-                toolResolution = resolution(
-                    callID: call.callID,
-                    payload: [
-                        "status": "rejected_by_user",
-                        "action_id": proposal.id.rawValue,
-                        "work_id": proposal.workID.rawValue,
-                        "message": "用户取消了这次写入，未执行任何动作。"
-                    ]
-                )
-            case .cancelled:
-                outcome = .cancelled
-                toolResolution = resolution(
-                    callID: call.callID,
-                    payload: [
-                        "status": "cancelled",
-                        "action_id": proposal.id.rawValue,
-                        "work_id": proposal.workID.rawValue,
-                        "message": "对话已结束，这次写入没有执行。"
-                    ]
-                )
+            let receipt = await executor.execute(proposal)
+            let toolResolution = receiptResolution(
+                callID: call.callID,
+                receipt: receipt
+            )
+            if sessionRevision == revisionAtStart {
+                completedOutputs[call.callID] = toolResolution.output
+                onResolution?(proposal, receipt)
             }
-            pendingCallID = nil
-            completedOutputs[call.callID] = toolResolution.output
-            onResolution?(request, outcome)
             return toolResolution
         } catch {
-            pendingCallID = nil
             return resolution(
                 callID: call.callID,
                 payload: [
@@ -226,16 +169,13 @@ final class ConversationActionBridge {
 private enum BridgeError: LocalizedError {
     case invalidText
     case textTooLong
-    case permissionUnavailable
 
     var errorDescription: String? {
         switch self {
         case .invalidText:
-            return "模型没有提供可预览的写入文字。"
+            return "模型没有提供可写入的完整文字。"
         case .textTooLong:
             return "本次写入内容过长，请缩短后重试。"
-        case .permissionUnavailable:
-            return "无法创建本次写入确认。"
         }
     }
 }

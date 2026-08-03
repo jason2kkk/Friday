@@ -1,5 +1,5 @@
 // 功能：展示 Friday 灵动岛的主页与设置形态，让用户查看状态并执行所有常用操作。
-// 职责：根据 InputOverlayModel 选择主页、Agent 动作确认或设置内容，呈现快捷操作、服务、权限、用量和最近结果，并转发业务命令。
+// 职责：根据 InputOverlayModel 选择主页或设置内容，呈现快捷操作、服务、权限、用量和最近结果，并转发业务命令。
 // 边界：视图只负责展示和事件转发，不直接读取系统权限、访问网络、管理凭证或控制音频设备。
 
 import SwiftUI
@@ -87,25 +87,16 @@ struct ContentView: View {
             dashboardHeader
             sectionDivider
 
-            if let confirmation = model.actionConfirmation {
-                AgentActionConfirmationView(
-                    confirmation: confirmation,
-                    onAllow: { model.onAllowAction?() },
-                    onReject: { model.onRejectAction?() },
-                    onDismiss: { model.onDismissActionResult?() }
-                )
-            } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 10) {
-                        presentedMessage
-                        quickActions
-                        usageMonitor
-                        attentionRows
-                        recentResult
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 10) {
+                    presentedMessage
+                    quickActions
+                    usageMonitor
+                    attentionRows
+                    recentResult
                 }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
             }
         }
     }
