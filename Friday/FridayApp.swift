@@ -1,5 +1,5 @@
-// 功能：启动 Friday macOS 应用，常驻顶部灵动岛，并承载应用级 Dictate 和 Talk 工作流。
-// 职责：创建 App 场景与 Runtime 依赖，统一管理权限、快捷键、录音、目标写回、应用意图、本地 Action 及 Talk 协调器。
+// 功能：启动带 Dock 入口的 Friday macOS 应用，展示独立主工作台与常驻顶部灵动岛，并承载应用级 Dictate 和 Talk 工作流。
+// 职责：管理关窗后继续运行与 Dock 重开窗口的应用生命周期，创建 Runtime 依赖，并统一管理权限、快捷键、录音、目标写回、应用意图、本地 Action 及 Talk 协调器。
 // 边界：不保存长期 API Key 或用户音频；系统访问、音频、网络和浮层细节分别委托给 Platform、Provider 与 Feature 类型。
 
 import AppKit
@@ -8,14 +8,20 @@ import SwiftUI
 
 @main
 struct FridayApp: App {
+    @NSApplicationDelegateAdaptor(FridayApplicationDelegate.self)
+    private var applicationDelegate
     @StateObject private var appState: AppState
 
     init() {
         let environment = ProcessInfo.processInfo.environment
         let isRunningTests = environment["XCTestConfigurationFilePath"] != nil
             || environment["XCTestBundlePath"] != nil
+        let isWorkspacePreview = environment["FRIDAY_WORKSPACE_PREVIEW"] != nil
         _appState = StateObject(
-            wrappedValue: AppState(servicesEnabled: !isRunningTests)
+            wrappedValue: AppState(
+                servicesEnabled: !isRunningTests && !isWorkspacePreview,
+                workspacePreviewEnabled: isWorkspacePreview
+            )
         )
     }
 
@@ -107,6 +113,7 @@ final class AppState: ObservableObject {
     private let realtimeProvider: DictationProvider = RealtimeDictationProvider()
     private let overlayModel = InputOverlayModel()
     private var overlayController: InputOverlayController?
+    private var workspaceWindowController: AppWorkspaceWindowController?
     private lazy var focusedInputActionExecutor = FocusedInputActionExecutor(
         inputService: accessibilityService
     )
@@ -148,6 +155,7 @@ final class AppState: ObservableObject {
     private var recordingLimitTask: Task<Void, Never>?
     private var feedbackTask: Task<Void, Never>?
     private var activationObserver: NSObjectProtocol?
+    private var workspaceOpenObserver: NSObjectProtocol?
     private var conversationObservation: AnyCancellable?
     private var dashboardObservation: AnyCancellable?
     private let minimumRecordingDuration: TimeInterval = 0.35
@@ -156,6 +164,7 @@ final class AppState: ObservableObject {
 
     init(
         servicesEnabled: Bool = true,
+        workspacePreviewEnabled: Bool = false,
         healthClient: SessionServiceHealthChecking = SessionServiceHealthClient()
     ) {
         self.servicesEnabled = servicesEnabled
@@ -164,6 +173,9 @@ final class AppState: ObservableObject {
 
         if servicesEnabled {
             overlayController = InputOverlayController(model: overlayModel)
+        }
+        if servicesEnabled || workspacePreviewEnabled {
+            workspaceWindowController = AppWorkspaceWindowController(model: overlayModel)
         }
 
         refreshPermissionStatus()
@@ -208,6 +220,10 @@ final class AppState: ObservableObject {
         overlayModel.onQuit = {
             NSApplication.shared.terminate(nil)
         }
+        overlayModel.onOpenWorkspace = { [weak self] in
+            self?.overlayModel.onCollapseFeedback?()
+            self?.workspaceWindowController?.show()
+        }
         microphoneService.onLevel = { [weak self] level in
             guard self?.workflowState.isRecording == true else { return }
             self?.overlayModel.audioLevel = level
@@ -241,10 +257,26 @@ final class AppState: ObservableObject {
                 self?.refreshReadiness()
             }
         }
+        workspaceOpenObserver = NotificationCenter.default.addObserver(
+            forName: .fridayOpenWorkspace,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.workspaceWindowController?.show()
+            }
+        }
 
         guard servicesEnabled else {
             workflowState = .unavailable("预览状态")
             serviceAvailability = .notRequired
+            if workspacePreviewEnabled {
+                overlayModel.dashboard = .preview
+                Task { @MainActor [weak self] in
+                    await Task.yield()
+                    self?.workspaceWindowController?.show()
+                }
+            }
             return
         }
 
@@ -262,11 +294,18 @@ final class AppState: ObservableObject {
         conversationCoordinator.start()
         refreshReadiness()
         syncIslandDashboard()
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            self?.workspaceWindowController?.show()
+        }
     }
 
     deinit {
         if let activationObserver {
             NotificationCenter.default.removeObserver(activationObserver)
+        }
+        if let workspaceOpenObserver {
+            NotificationCenter.default.removeObserver(workspaceOpenObserver)
         }
     }
 
@@ -309,7 +348,7 @@ final class AppState: ObservableObject {
             quotaLabel = "账户额度：服务不可用"
         }
 
-        overlayModel.dashboard = IslandDashboardSnapshot(
+        overlayModel.dashboard = AppDashboardSnapshot(
             status: status,
             model: modelName,
             serviceLabel: serviceLabel,

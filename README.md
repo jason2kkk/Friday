@@ -37,13 +37,13 @@ application or use the explicit proxy command documented in
 [`Backend/README.md`](Backend/README.md). The service now reports network and
 proxy failures without exposing the API key.
 
-The service listens on `http://127.0.0.1:8787`. Open Friday and its compact dynamic island stays at the top of the current display. Click the island to open the dashboard, or focus an input in another app and tap `Fn` to start and finish one recording.
+The service listens on `http://127.0.0.1:8787`. Open Friday and its native workspace appears while the compact dynamic island stays at the top of the current display. Close the workspace to keep Friday, its Dock icon, and global shortcuts running; click the Dock icon or idle island to reopen it. Focus an input in another app and tap `Fn` to start and finish one recording.
 
 Friday does not listen to the microphone while idle. Tap and release `Fn` by itself for Dictate, or `Control + Option` to start or end the voice Agent entry, currently backed by the speech-to-speech Talk runtime. A modifier-only chord is ignored if another modifier or a regular key is pressed before release, so existing shortcuts continue to work. The dormant wake-word implementation remains behind `WakeWordProviding` for a future opt-in mode, but it is not started by the current product path.
 
 While Talk is active, tap and release `Control + Command`. Friday keeps the desktop at its original brightness and shows a compact drag guide beside the pointer. Drag over one region, then continue speaking. Friday adds that user-selected region to the current Realtime conversation without immediately creating a model response. For example, select an English sentence and say “翻译成中文”. Press `Esc` to cancel selection. The image is JPEG-compressed in memory, is not written to disk or logs, and the next selected region replaces the previous image context only after the new image is accepted.
 
-Friday performs a non-inference model metadata check before reporting Live mode as ready. This verifies the local service, OpenAI network route, API key, and configured model without creating a Realtime session. The expanded island reports local credential count, current Talk responses, tokens, estimated cost, recent Dictate tokens, and the latest known billing error. A normal Project API key cannot read the OpenAI account's remaining balance, so Friday labels that value as unavailable instead of presenting the local count as account credit. A model response is created only after the user starts a recording. Failed processing retains the current audio in memory for an explicit retry and clears it after success or cancellation.
+Friday performs a non-inference model metadata check before reporting Live mode as ready. This verifies the local service, OpenAI network route, API key, and configured model without creating a Realtime session. The workspace monitoring page reports local credential count, current Talk responses, tokens, estimated cost, recent Dictate tokens, and the latest known billing error. A normal Project API key cannot read the OpenAI account's remaining balance, so Friday labels that value as unavailable instead of presenting the local count as account credit. A model response is created only after the user starts a recording. Failed processing retains the current audio in memory for an explicit retry and clears it after success or cancellation.
 
 Dictate and Talk both default to `gpt-realtime-2.1`. Dictate uses minimal
 reasoning with text output to produce the user's paste-ready result; Talk uses
@@ -60,7 +60,7 @@ optional provider contract and is not allowed to replace Dictate's
 - [Engineering problem reviews](docs/工程问题与复盘.md): evidence-led investigations, root causes, fixes, validation, and reusable lessons from difficult engineering problems.
 - [Architecture overview](docs/架构概览.md): interview-friendly component and flow diagrams, core concepts, memory model, and major tradeoffs.
 - [Technical architecture](docs/技术架构.md): detailed Context/Conversation/Memory/Work/Permission contracts and incremental migration plan.
-- [Interaction architecture](docs/交互架构.md): responsibilities and flows for the persistent dynamic island, expanded dashboard, in-island confirmations, and background results.
+- [Interaction architecture](docs/交互架构.md): responsibilities and flows for the Dock workspace, lightweight dynamic island, confirmations, and background results.
 - [Qwen Audio Agent architecture study](docs/Qwen%20Audio%20Agent%20架构研究.md): source-level findings, verified strengths, limitations, and the parts Friday should or should not adopt.
 - [LiveKit Talk validation plan](docs/LiveKit%20Talk%20技术验证计划.md): bounded comparison scope, audio ownership, privacy and cost controls, test matrix, and adoption gates.
 - [Engineering collaboration](docs/工程协作规范.md): responsibilities, approval boundaries, verification, and delivery rules.
@@ -70,8 +70,10 @@ optional provider contract and is not allowed to replace Dictate's
 ## Current scope
 
 - SwiftUI macOS app target
-- Persistent compact dynamic island that opens a `520 x 300` control dashboard and morphs in place to a narrower `400 x 480` settings menu
-- Commands, permission recovery, transient notices, failures, results, usage diagnostics, refresh, and quit controls live in the dashboard or its in-island settings page; there is no separate menu-bar menu or main window
+- Regular Dock application with a native `NavigationSplitView` workspace for overview, runtime monitoring, permissions, recovery, and settings
+- Closing the workspace does not terminate Friday or unregister global shortcuts; the Dock icon and idle dynamic island both reopen the retained window
+- White native Liquid Glass on macOS 26, with `NSVisualEffectView` material fallback on macOS 14 and 15
+- Persistent compact dynamic island limited to immediate Dictate/Talk state, lightweight notices, failures, result recovery, and opening the workspace
 - No microphone capture, Speech recognition task, Realtime credential, or model session while Friday is idle
 - Separate modifier-only `Fn` Dictate and `Control + Option` voice Agent shortcuts
 - Talk-only `Control + Command` screen-region selection with a transparent overlay, pointer-adjacent drag guide, `Esc` cancellation, multi-display support, and no response until the user continues speaking
@@ -107,12 +109,12 @@ optional provider contract and is not allowed to replace Dictate's
 - A privacy-safe latest-Talk trace at `~/Library/Application Support/Friday/Diagnostics/latest-talk.jsonl`; each new Talk replaces the previous trace and correlates activation, local input-gate candidates/confirmation/release, user speech, response, assistant item, playback, interruption, and tool resolution with per-stage latency fields, without audio, transcripts, screenshots, prompts, or credentials
 - `marin` as the default Talk voice, configurable on the session service
 - `Fn` global modifier gesture for starting and finishing Dictate
-- Expanded-island quit command with `Cmd+Q` support
+- Workspace settings include an explicit quit command with `Cmd+Q` support
 - Focused input capture through Accessibility
 - Local microphone capture with eight independently sampled compact waveform bars, pixel-aligned fixed bar width, smooth height-only response, and a flat idle state below the activity threshold
 - Microphone authorization is rechecked when Friday becomes active and before unavailable shortcut feedback, preventing an already-granted permission from showing a stale warning
 - Local speech-presence detection that delays the Realtime session until voice is detected and stops silent recordings before text generation
-- Silent recordings open a short notice inside the expanded island without taking focus
+- Silent recordings open a short lightweight island notice without taking focus
 - Non-activating, always-resident top dynamic island for idle, listening, thinking, result recovery, failure feedback, and notices; successful insertion returns it to the compact idle state
 - Soft island appearance and a shared inward-collapse animation for success, Escape, and dismissal
 - Low-opacity state atmosphere layered over an always-opaque black island, with slow cyan-green diffusion for listening, violet-rose diffusion for thinking, and reduced-motion support
@@ -130,7 +132,7 @@ optional provider contract and is not allowed to replace Dictate's
 - Live model deltas remain hidden until the final text passes the local dictation-output guard; the last validated result remains available when insertion fails
 - Accessibility target locking with `Cmd+V` text insertion for native, Web, and Electron inputs
 - Pasteboard restoration when insertion does not detect a newer user copy
-- Simplified Chinese expanded-island dashboard with status, shortcuts, required permission actions, usage monitoring, and recent result
+- Simplified Chinese native workspace with a system sidebar, status, shortcuts, required permission actions, usage monitoring, and recent result
 - macOS 14.0 minimum deployment target
 - `FridayTests` target covering Mock behavior and Realtime event parsing
 - Repository quality gate at `scripts/verify.sh`, covering Node integration tests, plist/pbxproj checks, and signed Xcode tests without OpenAI calls

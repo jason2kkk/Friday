@@ -598,15 +598,51 @@ final class DictationProviderTests: XCTestCase {
         XCTAssertEqual(InputOverlaySizing.compactWingWidth, 52)
     }
 
-    func testPersistentIslandUsesCompactAndExpandedDashboardSizes() {
+    func testPersistentIslandUsesCompactAndFeedbackSizes() {
         let model = InputOverlayModel()
 
         model.phase = .idle
         XCTAssertEqual(model.currentSize, model.compactSize)
 
         model.phase = .result(text: "结果", message: "请复制", canRetry: false)
-        model.isDashboardExpanded = true
-        XCTAssertEqual(model.currentSize, InputOverlaySizing.expandedSize)
+        XCTAssertEqual(model.currentSize, InputOverlaySizing.feedbackSize)
+
+        XCTAssertLessThan(
+            InputOverlaySizing.feedbackSize.width,
+            AppWorkspaceSizing.minimumSize.width
+        )
+    }
+
+    @MainActor
+    func testClosingTheLastWorkspaceWindowKeepsFridayRunning() {
+        let delegate = FridayApplicationDelegate()
+
+        XCTAssertFalse(
+            delegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared)
+        )
+    }
+
+    @MainActor
+    func testDockReopenRequestsTheWorkspaceWhileTheIslandIsVisible() {
+        let delegate = FridayApplicationDelegate()
+        var receivedOpenRequest = false
+        let notificationName = Notification.Name("Friday.openWorkspace")
+        let observer = NotificationCenter.default.addObserver(
+            forName: notificationName,
+            object: nil,
+            queue: .main
+        ) { _ in
+            receivedOpenRequest = true
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        XCTAssertTrue(
+            delegate.applicationShouldHandleReopen(
+                NSApplication.shared,
+                hasVisibleWindows: true
+            )
+        )
+        XCTAssertTrue(receivedOpenRequest)
     }
 
     func testOverlayAtmosphereTracksWorkflowPhase() {
@@ -1677,12 +1713,11 @@ final class DictationProviderTests: XCTestCase {
         coordinator.stop()
     }
 
-    func testNoticeUsesTheExpandedIslandInsteadOfASeparateToast() {
+    func testNoticeUsesTheLightweightIslandFeedbackPanel() {
         let model = InputOverlayModel()
         model.phase = .notice("没有找到可用于播放 Friday 声音的设备。")
-        model.isDashboardExpanded = true
 
-        XCTAssertEqual(model.currentSize, InputOverlaySizing.expandedSize)
+        XCTAssertEqual(model.currentSize, InputOverlaySizing.feedbackSize)
     }
 
     func testConversationPhaseUsesCompactIslandWithoutDevelopmentSessionLimits() {
@@ -1782,20 +1817,14 @@ final class DictationProviderTests: XCTestCase {
         coordinator.stop()
     }
 
-    func testOverlayWindowLeavesStableShadowPaddingAcrossExpandedSurfaces() {
+    func testOverlayWindowLeavesStableShadowPaddingForFeedback() {
         XCTAssertEqual(
             InputOverlaySizing.windowSize.width,
-            max(
-                InputOverlaySizing.expandedSize.width,
-                InputOverlaySizing.settingsSize.width
-            )
+            InputOverlaySizing.feedbackSize.width
         )
         XCTAssertEqual(
             InputOverlaySizing.windowSize.height,
-            max(
-                InputOverlaySizing.expandedSize.height,
-                InputOverlaySizing.settingsSize.height
-            ) + InputOverlaySizing.shadowPadding
+            InputOverlaySizing.feedbackSize.height + InputOverlaySizing.shadowPadding
         )
     }
 
