@@ -62,6 +62,7 @@ optional provider contract and is not allowed to replace Dictate's
 - [Technical architecture](docs/技术架构.md): detailed Context/Conversation/Memory/Work/Permission contracts and incremental migration plan.
 - [Interaction architecture](docs/交互架构.md): responsibilities and flows for the persistent dynamic island, expanded dashboard, in-island confirmations, and background results.
 - [Qwen Audio Agent architecture study](docs/Qwen%20Audio%20Agent%20架构研究.md): source-level findings, verified strengths, limitations, and the parts Friday should or should not adopt.
+- [LiveKit Talk validation plan](docs/LiveKit%20Talk%20技术验证计划.md): bounded comparison scope, audio ownership, privacy and cost controls, test matrix, and adoption gates.
 - [Engineering collaboration](docs/工程协作规范.md): responsibilities, approval boundaries, verification, and delivery rules.
 - [Codex engineering rules](AGENTS.md): mandatory repository instructions for coding agents.
 - [Documentation index](docs/README.md): document authority and maintenance order.
