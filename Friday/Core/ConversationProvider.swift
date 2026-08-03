@@ -136,6 +136,8 @@ enum ConversationEvent: Equatable {
     case userTranscriptionFailed(ConversationInputTranscriptionFailure)
     case assistantResponseStarted(responseID: ConversationProviderResponseID?)
     case assistantItemStarted(ConversationProviderEventIdentity)
+    // A runtime-managed audio path has begun playback; no PCM should be replayed locally.
+    case assistantPlaybackStarted(ConversationProviderEventIdentity)
     case assistantAudio(identity: ConversationProviderEventIdentity, data: Data)
     case assistantAudioFinished(ConversationProviderEventIdentity)
     case assistantTranscriptDelta(

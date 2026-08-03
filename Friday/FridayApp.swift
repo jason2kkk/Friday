@@ -1,5 +1,5 @@
 // 功能：启动 Friday macOS 应用，常驻顶部灵动岛，并承载应用级 Dictate 和 Talk 工作流。
-// 职责：创建 App 场景与服务依赖，统一管理权限和就绪状态、快捷键分发、录音处理、目标写回、失败恢复及 Talk 协调器。
+// 职责：创建 App 场景与 Runtime 依赖，统一管理权限和就绪状态、快捷键分发、录音处理、目标写回、失败恢复及 Talk 协调器。
 // 边界：不保存长期 API Key 或用户音频；系统访问、音频、网络和浮层细节分别委托给 Platform、Provider 与 Feature 类型。
 
 import AppKit
@@ -115,11 +115,14 @@ final class AppState: ObservableObject {
         case .live:
             conversationProvider = RealtimeConversationProvider()
         }
+        let conversationRuntime = DirectRealtimeConversationRuntimeSession(
+            conversationProvider: conversationProvider,
+            audioService: ConversationAudioService()
+        )
         return ConversationCoordinator(
             activationMode: .shortcut,
             wakeWordProvider: MockWakeWordService(),
-            conversationProvider: conversationProvider,
-            audioService: ConversationAudioService(),
+            conversationRuntime: conversationRuntime,
             presentation: InputOverlayConversationPresenter(
                 model: overlayModel,
                 controller: overlayController

@@ -79,6 +79,9 @@ optional provider contract and is not allowed to replace Dictate's
 - Screen capture permission remains independent: denying it leaves Dictate and ordinary Talk available
 - Dormant on-device `Hey Friday` implementation behind a replaceable `WakeWordProviding` boundary for a future opt-in mode
 - Interruptible speech-to-speech Talk session using high-eagerness semantic VAD, client-owned response creation, PCM16 playback, and client-side WebSocket truncation
+- `ConversationRuntimeSession` is the single Talk lifecycle boundary: it atomically supplies the Provider, audio port, audio ownership, recording policy, and start/stop behavior to `ConversationCoordinator`
+- The shipping composition remains `DirectRealtimeConversationRuntimeSession`, preserving Friday-owned VoiceProcessingIO audio followed by the existing Realtime Provider connection
+- A zero-cost LiveKit Stage 0 adapter defines short-lived Room credentials, disabled recording, one-runtime audio ownership, Provider event mapping, and versioned Action Proposal/Receipt RPC; it contains no LiveKit SDK, Room connection, or production selection
 - Realtime Talk tool routing for draft, explicit confirmation, discard, status, and cancellation is exposed only when final input transcription is configured; every tool result is returned to the same conversation
 - Session-scoped `WorkDraft` correlation: model intent and final input transcription must share one Friday TurnID, and a separate final transcript must explicitly say “确认提交” before formal Mock Work creation
 - In-memory Mock Work Runtime with idempotent submission, query, cancellation, bounded polling, and explicit `mock_read_only` results
@@ -137,7 +140,9 @@ Move the bounded Agent path forward without weakening the existing Dictate and T
 1. Choose and deliberately enable one final user-turn ASR Provider, then verify the WorkDraft restatement and “确认提交” flow in a bounded real Talk session.
 2. Replace the in-memory Work Store with the documented local SQLite store and add restart recovery.
 3. Add a task surface for inspecting and cancelling Work without exposing internal model or session details.
-4. Only then introduce the first structured `ActionProposal`, permission confirmation, and reversible local action.
+4. Only then connect the existing structured `ActionProposal` contract to permission confirmation and the first reversible local action.
+
+The LiveKit candidate is intentionally paused after Stage 0. Entering its real-audio Stage 1 requires a separate product and budget decision; the current contracts do not demonstrate `gpt-realtime-2.1` compatibility, AEC quality, interruption quality, latency, or cost.
 
 The OpenAI API key should stay on the backend, never inside the Mac app bundle.
 

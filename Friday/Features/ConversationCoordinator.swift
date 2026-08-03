@@ -1,5 +1,5 @@
 // 功能：编排 Talk 从快捷键或可选唤醒入口到双向语音交流、图片上下文、诊断和结束清理的完整用户流程。
-// 职责：协调 Provider、全双工音频与 Presentation，管理连接缓冲、轮次身份、插话截断、响应风暴保护、无内容诊断和错误恢复。
+// 职责：协调可替换 Talk Runtime、Presentation 与屏幕上下文，管理连接缓冲、轮次身份、插话截断、响应风暴保护、无内容诊断和错误恢复。
 // 边界：不直接实现 WebSocket、AVAudioEngine、屏幕截图或窗口绘制，也不持有长期 API Key，不把用户音频或对话文本写入诊断。
 
 import Foundation
@@ -65,6 +65,7 @@ final class ConversationCoordinator: ObservableObject {
 
     private let activationMode: ConversationActivationMode
     private let wakeWordProvider: WakeWordProviding
+    let conversationRuntime: any ConversationRuntimeSession
     let conversationProvider: ConversationProviding
     let audioService: any ConversationAudioServicing
     private let screenCaptureService: ScreenRegionCapturing
@@ -108,7 +109,7 @@ final class ConversationCoordinator: ObservableObject {
     let logger = Logger(subsystem: "com.example.Friday", category: "TalkMetrics")
     private static let maximumPendingInputFrames = 24_000 * 5
 
-    init(
+    convenience init(
         activationMode: ConversationActivationMode,
         wakeWordProvider: WakeWordProviding,
         conversationProvider: ConversationProviding,
@@ -121,10 +122,40 @@ final class ConversationCoordinator: ObservableObject {
         openingGreetingDelay: Duration = ConversationLimits.openingGreetingDelay,
         userTurnResponseGrace: Duration = ConversationLimits.userTurnResponseGrace
     ) {
+        self.init(
+            activationMode: activationMode,
+            wakeWordProvider: wakeWordProvider,
+            conversationRuntime: DirectRealtimeConversationRuntimeSession(
+                conversationProvider: conversationProvider,
+                audioService: audioService
+            ),
+            screenCaptureService: screenCaptureService,
+            screenSelectionController: screenSelectionController,
+            presentation: presentation,
+            workBridge: workBridge,
+            diagnostics: diagnostics,
+            openingGreetingDelay: openingGreetingDelay,
+            userTurnResponseGrace: userTurnResponseGrace
+        )
+    }
+
+    init(
+        activationMode: ConversationActivationMode,
+        wakeWordProvider: WakeWordProviding,
+        conversationRuntime: any ConversationRuntimeSession,
+        screenCaptureService: ScreenRegionCapturing? = nil,
+        screenSelectionController: ScreenRegionSelecting? = nil,
+        presentation: any ConversationPresenting,
+        workBridge: ConversationWorkBridge? = nil,
+        diagnostics: (any ConversationDiagnosticsRecording)? = nil,
+        openingGreetingDelay: Duration = ConversationLimits.openingGreetingDelay,
+        userTurnResponseGrace: Duration = ConversationLimits.userTurnResponseGrace
+    ) {
         self.activationMode = activationMode
         self.wakeWordProvider = wakeWordProvider
-        self.conversationProvider = conversationProvider
-        self.audioService = audioService
+        self.conversationRuntime = conversationRuntime
+        conversationProvider = conversationRuntime.conversationProvider
+        audioService = conversationRuntime.audioService
         self.screenCaptureService = screenCaptureService ?? ScreenRegionCaptureService()
         self.screenSelectionController = screenSelectionController
             ?? ScreenRegionSelectionController()
@@ -168,8 +199,7 @@ final class ConversationCoordinator: ObservableObject {
         suppressedPlaybackSpeechItemIDs.removeAll(keepingCapacity: false)
         screenSelectionController.cancelSelection()
         wakeWordProvider.stop()
-        conversationProvider.disconnect()
-        audioService.stop()
+        conversationRuntime.stop()
         sessionSnapshot = sessionLedger.endSession()
         turnCorrelator.endSession()
         workBridge.endConversationSession()
@@ -314,6 +344,9 @@ final class ConversationCoordinator: ObservableObject {
         }
         conversationProvider.onEvent = { [weak self] event in
             self?.handleConversationEvent(event)
+        }
+        conversationRuntime.onLifecycleEvent = { [weak self] event in
+            self?.recordDiagnostic("runtime.\(event.rawValue)")
         }
         workBridge.onTerminalWork = { [weak self] work in
             self?.handleTerminalWork(work)
@@ -460,7 +493,14 @@ final class ConversationCoordinator: ObservableObject {
         suppressedPlaybackSpeechItemIDs.removeAll(keepingCapacity: true)
         isProviderResponseOutstanding = false
         state = .connecting
-        recordDiagnostic("audio.start_requested")
+        recordDiagnostic(
+            "runtime.selected",
+            attributes: [
+                "runtime": conversationRuntime.descriptor.kind.rawValue,
+                "audio_owner": conversationRuntime.descriptor.audioOwner.rawValue,
+                "recording": conversationRuntime.descriptor.recordingPolicy.rawValue
+            ]
+        )
         recordDiagnostic(
             "presentation.show_requested",
             attributes: ["expression": "awake"]
@@ -471,14 +511,9 @@ final class ConversationCoordinator: ObservableObject {
         conversationTask = Task { [weak self] in
             guard let self else { return }
             do {
-                try await audioService.start()
-                try Task.checkCancellation()
-                recordDiagnostic("audio.started")
-                recordDiagnostic("provider.connect_requested")
-                try await conversationProvider.connect()
+                try await conversationRuntime.start()
                 try Task.checkCancellation()
                 isProviderConnected = true
-                recordDiagnostic("provider.connected")
                 flushPendingInput()
                 state = .listening
                 presentation.show(expression: .attentive, source: .microphone)
@@ -726,8 +761,7 @@ final class ConversationCoordinator: ObservableObject {
         }
         screenSelectionController.cancelSelection()
         presentation.show(expression: .resting, source: .idle)
-        conversationProvider.disconnect()
-        audioService.stop()
+        conversationRuntime.stop()
         sessionSnapshot = sessionLedger.endSession()
         turnCorrelator.endSession()
         workBridge.endConversationSession()

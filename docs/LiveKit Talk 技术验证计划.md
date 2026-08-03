@@ -1,12 +1,12 @@
 # Friday LiveKit Talk 技术验证计划
 
-> 版本：0.1
+> 版本：0.2
 >
 > 日期：2026-08-03
 >
-> 状态：待执行，仅完成方案设计
+> 状态：Stage 0 零费用契约已完成；Stage 1 未获批、未执行
 >
-> 关联：[GitHub Issue #6](https://github.com/jason2kkk/Friday/issues/6)
+> 关联：[GitHub Issue #6](https://github.com/jason2kkk/Friday/issues/6)、[GitHub Issue #8](https://github.com/jason2kkk/Friday/issues/8)
 
 ## 1. 结论先行
 
@@ -14,10 +14,10 @@ LiveKit 值得验证，但现在不应该替换 Friday 的 Talk。
 
 它最可能解决的是实时语音会话编排：停说判断、自然插话、简短附和识别、误插话后的恢复、Provider 适配和逐轮指标。它不负责 Friday 已经建立的 macOS 输入目标锁定、屏幕框选、灵动岛、本地动作策略、后台 Work、Memory 或 Permission。
 
-本次只定义如何验证，不接入 SDK、不创建云资源、不申请凭证、不发送音频，也不产生 OpenAI 或 LiveKit 费用。后续只有在产品负责人再次批准真实测试与预算后，才能进入技术验证实现。
+本次已完成 Stage 0：Friday 建立了可替换 Talk Runtime、假 LiveKit Transport、短期 Room Credential、禁用录制配置和 Action RPC 数据契约。实现不接入 SDK、不创建云资源、不申请凭证、不发送音频，也不产生 OpenAI 或 LiveKit 费用。后续只有在产品负责人再次批准真实测试与预算后，才能进入 Stage 1。
 
 ```text
-当前结论：候选 Conversation Runtime
+当前结论：Stage 0 契约可接入的候选 Conversation Runtime
 不是：已选定的生产架构
 ```
 
@@ -127,7 +127,7 @@ LiveKit 模式启动
 ### 4.3 产品边界
 
 - Dictate 始终保留现有直接 `gpt-realtime-2.1` 路径。
-- LiveKit 只可能成为 `ConversationProviding` 的另一个 Talk 实现。
+- LiveKit 只可能成为 `ConversationRuntimeSession` 的另一个 Talk 实现，同时提供 Provider 与音频端口；只替换 `ConversationProviding` 无法表达设备音频所有权。
 - 用户界面不显示 Provider 或技术模式；实验仅通过 Debug 配置启用。
 - 当前 Talk Provider 在验证期间保留，必须支持立即回退。
 - 屏幕图片和本地动作不能直接暴露为 LiveKit 服务端的系统权限。
@@ -137,16 +137,27 @@ LiveKit 模式启动
 
 ### Stage 0：零费用可行性
 
-不使用真实凭证，只回答架构是否接得上：
+状态：已完成。不使用真实凭证，只回答架构是否接得上：
 
 1. 固定 LiveKit Agents `1.6.7` 与 Swift SDK `2.15.3`。
-2. 用假 Room/Provider 验证 Session 状态可以映射到 Friday 的 listening、speaking、paused 和 failure。
+2. 用假 Room/Provider 验证连接、用户说话、助手播放和失败事件可以映射到 Friday 的中立会话事件。
 3. 验证 `gpt-realtime-2.1` 的配置 payload 能通过插件本地构造，但明确不把构造成功写成模型兼容。
 4. 验证短期 Room Token、RPC ActionProposal/ActionReceipt 和断线错误的类型契约。
 5. 验证候选模式不会启动现有 `ConversationAudioService`。
 6. 验证 `record=False` 为显式必填项，缺失时测试失败。
 
-Stage 0 通过后，单独提交是否进入真实语音验证的决定；不自动进入下一阶段。
+落地结果：
+
+- `ConversationRuntimeSession` 原子提供 Provider、音频端口、所有权、录制策略和启停；Coordinator 不再根据供应商类型分支。
+- `DirectRealtimeConversationRuntimeSession` 保持“先 Friday 本地音频、后 Realtime Provider”的现有路径，并在 Provider 失败或取消时统一清理。
+- `LiveKitConversationRuntimeSession` 同时实现 Provider 与音频端口，只依赖可替换假 Transport；Transport 启动失败时统一停止。
+- `LiveKitConversationSessionConfiguration` 默认携带 `gpt-realtime-2.1`、`marin` 和 low reasoning，但强制 `recordSession=false`；配置可构造不是兼容性证据。
+- Room Token 的文本描述固定脱敏；本轮没有真实 Token、Room 或 Agent 进程。
+- `ActionProposal` / `ActionReceipt` 使用带版本和方法校验的 JSON RPC envelope，单条消息上限 64KB；远端只能提出动作，Stage 0 不执行动作。
+- Provider 管理播放时使用中立 `assistantPlaybackStarted` 事件，Friday 不重复播放远端 PCM，但仍保留 Friday 自有 Turn/Playback 关联和 Presentation 状态。
+- 8 条聚焦 XCTest 覆盖直接路径顺序与失败清理、LiveKit 录制禁用、单一 Transport、启动失败清理、Token 脱敏、Action RPC 往返，以及非法 ID/版本/方法/大小拒绝；没有访问网络或音频设备。
+
+Stage 0 只证明当前契约可以承载两种所有权模型，不证明 LiveKit SDK 可编译、真实 `gpt-realtime-2.1` 可用、AEC/插话更好或费用可接受。是否进入真实语音验证必须单独决定，不自动进入下一阶段。
 
 ### Stage 1：受控真实语音对比
 
@@ -274,7 +285,7 @@ end_reason
 
 ## 10. 最终产物
 
-技术验证完成后应提交一份结果记录，包含：
+Stage 0 结果已经记录在本文、产品路线图和工程复盘中。若获批完成 Stage 1/2，还应提交一份真实对比结果记录，包含：
 
 1. 当前 Talk 与 LiveKit Talk 的同口径指标表。
 2. 六类场景的成功数、失败数和无内容诊断证据。
@@ -284,4 +295,4 @@ end_reason
 6. `采纳 / 继续观察 / 拒绝` 结论和理由。
 7. 若采纳，独立的生产接入 Issue、迁移顺序和回滚方案。
 
-在结果记录出现前，Friday 的架构事实仍然是：Dictate 与 Talk 直接使用现有 Realtime Provider，LiveKit 只是候选方案。
+在真实对比结果出现前，Friday 的架构事实仍然是：Dictate 直接使用现有 Realtime Provider；Talk 通过 `ConversationRuntimeSession` 装配，但产品组合仍选择 Direct Realtime；LiveKit 只有 Stage 0 契约，仍是候选方案。

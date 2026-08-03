@@ -297,26 +297,10 @@ extension ConversationCoordinator {
                 )
             )
             audioService.beginAssistantResponse()
+        case .assistantPlaybackStarted(let identity):
+            beginAssistantPlayback(identity: identity, audioData: nil)
         case .assistantAudio(let identity, let data):
-            guard state != .selectingScreenRegion,
-                  state != .capturingScreenRegion else { return }
-            let playbackWasActive = turnCorrelator.activePlaybackID != nil
-            guard let turn = turnCorrelator.beginPlayback(identity: identity),
-                  turn.turnID == turnCorrelator.activeTurnID else { return }
-            if !playbackWasActive {
-                recordDiagnostic(
-                    "audio.playback_started",
-                    turn: turn,
-                    providerResponseID: identity.responseID,
-                    providerAssistantItemID: identity.itemID,
-                    attributes: diagnosticTimeline.recordPlaybackStarted(
-                        turnID: turn.turnID
-                    )
-                )
-            }
-            state = .assistantSpeaking
-            presentation.show(expression: .speaking, source: .assistant)
-            audioService.enqueueAssistantAudio(data)
+            beginAssistantPlayback(identity: identity, audioData: data)
         case .assistantAudioFinished(let identity):
             guard state != .selectingScreenRegion,
                   state != .capturingScreenRegion else { return }
@@ -470,6 +454,33 @@ extension ConversationCoordinator {
                 showToast: notice,
                 resumeWakeWord: true
             )
+        }
+    }
+
+    private func beginAssistantPlayback(
+        identity: ConversationProviderEventIdentity,
+        audioData: Data?
+    ) {
+        guard state != .selectingScreenRegion,
+              state != .capturingScreenRegion else { return }
+        let playbackWasActive = turnCorrelator.activePlaybackID != nil
+        guard let turn = turnCorrelator.beginPlayback(identity: identity),
+              turn.turnID == turnCorrelator.activeTurnID else { return }
+        if !playbackWasActive {
+            recordDiagnostic(
+                "audio.playback_started",
+                turn: turn,
+                providerResponseID: identity.responseID,
+                providerAssistantItemID: identity.itemID,
+                attributes: diagnosticTimeline.recordPlaybackStarted(
+                    turnID: turn.turnID
+                )
+            )
+        }
+        state = .assistantSpeaking
+        presentation.show(expression: .speaking, source: .assistant)
+        if let audioData {
+            audioService.enqueueAssistantAudio(audioData)
         }
     }
 
