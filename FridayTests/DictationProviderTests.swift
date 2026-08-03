@@ -540,6 +540,7 @@ final class DictationProviderTests: XCTestCase {
         XCTAssertEqual(health.inputTranscriptionEnabled, true)
         XCTAssertEqual(health.inputTranscriptionModel, "gpt-realtime-whisper")
         XCTAssertTrue(SessionServiceAvailability.available(health).isAvailable)
+        XCTAssertEqual(RealtimeConfiguration.readinessEndpoint?.path, "/ready")
     }
 
     func testInputTargetClassifierRecognizesCommonEditableElements() {
@@ -594,7 +595,7 @@ final class DictationProviderTests: XCTestCase {
             sizing.centerGapWidth + InputOverlaySizing.compactWingWidth * 2,
             accuracy: 0.001
         )
-        XCTAssertEqual(InputOverlaySizing.compactWingWidth, 82)
+        XCTAssertEqual(InputOverlaySizing.compactWingWidth, 52)
     }
 
     func testPersistentIslandUsesCompactAndExpandedDashboardSizes() {
@@ -686,6 +687,36 @@ final class DictationProviderTests: XCTestCase {
                 "item_id": "user_item_1"
             ]),
             [.userSpeechStopped(itemID: userItemID)]
+        )
+        XCTAssertEqual(
+            parser.consume([
+                "type": "conversation.item.input_audio_transcription.completed",
+                "item_id": "user_item_1",
+                "transcript": "创建一个后台测试任务。",
+                "languages": [["code": "zh"]],
+                "usage": [
+                    "type": "tokens",
+                    "input_tokens": 12,
+                    "output_tokens": 7,
+                    "total_tokens": 19
+                ]
+            ]),
+            [
+                .userTranscriptionCompleted(
+                    ConversationInputTranscription(
+                        itemID: userItemID!,
+                        text: "创建一个后台测试任务。",
+                        language: "zh",
+                        confidence: nil,
+                        usage: UserTurnTranscriptionUsage(
+                            inputTokens: 12,
+                            outputTokens: 7,
+                            totalTokens: 19,
+                            audioSeconds: nil
+                        )
+                    )
+                )
+            ]
         )
         XCTAssertEqual(
             parser.consume([
@@ -785,6 +816,37 @@ final class DictationProviderTests: XCTestCase {
         )
     }
 
+    func testConversationParserTreatsCancellationRaceAsNonFatal() {
+        var parser = ConversationEventParser()
+
+        XCTAssertEqual(
+            parser.consume([
+                "type": "error",
+                "error": [
+                    "type": "invalid_request_error",
+                    "code": "response_cancel_not_active",
+                    "message": "Cancellation failed: no active response found"
+                ]
+            ]),
+            [
+                .assistantCancellationIgnored(
+                    code: "response_cancel_not_active"
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            parser.consume([
+                "type": "error",
+                "error": [
+                    "type": "invalid_request_error",
+                    "message": "Cancellation failed: no active response found"
+                ]
+            ]),
+            [.assistantCancellationIgnored(code: nil)]
+        )
+    }
+
     func testConversationParserEmitsCompletedFunctionCallWithoutAudioItem() {
         var parser = ConversationEventParser()
         let responseID = ConversationProviderResponseID("resp_tool_1")
@@ -835,9 +897,48 @@ final class DictationProviderTests: XCTestCase {
         )
     }
 
+    func testConversationParserKeepsTranscriptionFailureScopedToUserItem() {
+        var parser = ConversationEventParser()
+
+        XCTAssertEqual(
+            parser.consume([
+                "type": "conversation.item.input_audio_transcription.failed",
+                "item_id": "user_failed_transcript",
+                "error": [
+                    "code": "audio_unintelligible",
+                    "message": "The audio could not be transcribed."
+                ]
+            ]),
+            [
+                .userTranscriptionFailed(
+                    ConversationInputTranscriptionFailure(
+                        itemID: ConversationProviderItemID("user_failed_transcript")!,
+                        code: "audio_unintelligible"
+                    )
+                )
+            ]
+        )
+    }
+
     func testConversationWorkBridgeRoutesSubmitStatusAndCancel() async throws {
         let service = TestWorkService()
-        let bridge = ConversationWorkBridge(service: service)
+        let bridge = ConversationWorkBridge(
+            service: service,
+            transcriptWaitAttempts: 0
+        )
+        bridge.beginConversationSession()
+        let sourceTurnID = ConversationTurnID()
+        bridge.recordFinalTranscript(
+            FinalUserTranscript(
+                turnID: sourceTurnID,
+                text: "创建一个后台测试任务，验证后台任务不阻塞对话。",
+                source: .realtimeInput,
+                language: "zh",
+                confidence: nil,
+                completedAt: Date(timeIntervalSince1970: 1_000),
+                usage: nil
+            )
+        )
 
         let submit = await bridge.resolve(
             ConversationToolCall(
@@ -845,12 +946,38 @@ final class DictationProviderTests: XCTestCase {
                 name: "submit_work",
                 argumentsJSON: #"{"objective":"  验证后台任务   不阻塞对话  "}"#,
                 responseID: nil
+            ),
+            sourceTurnID: sourceTurnID
+        )
+        XCTAssertNil(service.submittedObjective)
+        XCTAssertNil(submit.workToObserve)
+        XCTAssertTrue(submit.output.contains(#""status":"awaiting_confirmation""#))
+
+        let confirmationTurnID = ConversationTurnID()
+        bridge.recordFinalTranscript(
+            FinalUserTranscript(
+                turnID: confirmationTurnID,
+                text: "确认提交。",
+                source: .realtimeInput,
+                language: "zh",
+                confidence: nil,
+                completedAt: Date(timeIntervalSince1970: 1_001),
+                usage: nil
             )
         )
+        let confirmation = await bridge.resolve(
+            ConversationToolCall(
+                callID: ConversationToolCallID("call_confirm")!,
+                name: "confirm_work",
+                argumentsJSON: "{}",
+                responseID: nil
+            ),
+            sourceTurnID: confirmationTurnID
+        )
         XCTAssertEqual(service.submittedObjective, "验证后台任务 不阻塞对话")
-        XCTAssertEqual(service.submissionKey, "realtime:call_submit")
-        XCTAssertEqual(submit.workToObserve, service.workID)
-        XCTAssertTrue(submit.output.contains(#""status":"accepted""#))
+        XCTAssertTrue(service.submissionKey?.hasPrefix("draft:draft_") == true)
+        XCTAssertEqual(confirmation.workToObserve, service.workID)
+        XCTAssertTrue(confirmation.output.contains(#""status":"accepted""#))
 
         let status = await bridge.resolve(
             ConversationToolCall(
@@ -873,6 +1000,209 @@ final class DictationProviderTests: XCTestCase {
         )
         XCTAssertEqual(service.cancelRequestIDs, [service.workID])
         XCTAssertTrue(cancellation.output.contains(#""state":"cancelled""#))
+    }
+
+    func testConversationWorkBridgeNeverSubmitsWithoutFinalSourceTranscript() async {
+        let service = TestWorkService()
+        let bridge = ConversationWorkBridge(
+            service: service,
+            transcriptWaitAttempts: 0
+        )
+        bridge.beginConversationSession()
+
+        let result = await bridge.resolve(
+            ConversationToolCall(
+                callID: ConversationToolCallID("call_without_transcript")!,
+                name: "submit_work",
+                argumentsJSON: #"{"objective":"测试缺失转写时不执行"}"#,
+                responseID: nil
+            ),
+            sourceTurnID: ConversationTurnID()
+        )
+
+        XCTAssertNil(service.submittedObjective)
+        XCTAssertNil(result.workToObserve)
+        XCTAssertTrue(result.output.contains(#""status":"transcript_unavailable""#))
+    }
+
+    func testConversationWorkBridgeCorrelatesLateTranscriptBeforeDraftReply() async {
+        let service = TestWorkService()
+        let bridge = ConversationWorkBridge(
+            service: service,
+            transcriptWaitAttempts: 10,
+            transcriptWaitInterval: .milliseconds(20)
+        )
+        bridge.beginConversationSession()
+        let sourceTurnID = ConversationTurnID()
+        let resolutionTask = Task {
+            await bridge.resolve(
+                ConversationToolCall(
+                    callID: ConversationToolCallID("call_late_transcript")!,
+                    name: "submit_work",
+                    argumentsJSON: #"{"objective":"验证异步最终转写"}"#,
+                    responseID: nil
+                ),
+                sourceTurnID: sourceTurnID
+            )
+        }
+
+        try? await Task.sleep(for: .milliseconds(45))
+        bridge.recordFinalTranscript(
+            FinalUserTranscript(
+                turnID: sourceTurnID,
+                text: "创建一个任务，验证异步最终转写。",
+                source: .realtimeInput,
+                language: "zh",
+                confidence: nil,
+                completedAt: Date(timeIntervalSince1970: 1_000),
+                usage: nil
+            )
+        )
+        let result = await resolutionTask.value
+
+        XCTAssertNil(service.submittedObjective)
+        XCTAssertTrue(result.output.contains(#""status":"awaiting_confirmation""#))
+    }
+
+    func testConversationWorkBridgeRejectsAmbiguousConfirmationTranscript() async {
+        let service = TestWorkService()
+        let bridge = ConversationWorkBridge(
+            service: service,
+            transcriptWaitAttempts: 0
+        )
+        bridge.beginConversationSession()
+        let sourceTurnID = ConversationTurnID()
+        bridge.recordFinalTranscript(
+            FinalUserTranscript(
+                turnID: sourceTurnID,
+                text: "创建一个后台测试任务。",
+                source: .realtimeInput,
+                language: "zh",
+                confidence: nil,
+                completedAt: Date(timeIntervalSince1970: 1_000),
+                usage: nil
+            )
+        )
+        _ = await bridge.resolve(
+            ConversationToolCall(
+                callID: ConversationToolCallID("call_prepare_ambiguous")!,
+                name: "submit_work",
+                argumentsJSON: #"{"objective":"创建后台测试任务"}"#,
+                responseID: nil
+            ),
+            sourceTurnID: sourceTurnID
+        )
+        let confirmationTurnID = ConversationTurnID()
+        bridge.recordFinalTranscript(
+            FinalUserTranscript(
+                turnID: confirmationTurnID,
+                text: "好的。",
+                source: .realtimeInput,
+                language: "zh",
+                confidence: nil,
+                completedAt: Date(timeIntervalSince1970: 1_001),
+                usage: nil
+            )
+        )
+
+        let result = await bridge.resolve(
+            ConversationToolCall(
+                callID: ConversationToolCallID("call_ambiguous_confirm")!,
+                name: "confirm_work",
+                argumentsJSON: "{}",
+                responseID: nil
+            ),
+            sourceTurnID: confirmationTurnID
+        )
+
+        XCTAssertNil(service.submittedObjective)
+        XCTAssertTrue(result.output.contains(#""status":"rejected""#))
+    }
+
+    func testConversationWorkBridgeRejectsConfirmationFromSourceTurn() async {
+        let service = TestWorkService()
+        let bridge = ConversationWorkBridge(
+            service: service,
+            transcriptWaitAttempts: 0
+        )
+        bridge.beginConversationSession()
+        let sourceTurnID = ConversationTurnID()
+        bridge.recordFinalTranscript(
+            FinalUserTranscript(
+                turnID: sourceTurnID,
+                text: "创建一个后台测试任务，然后确认提交。",
+                source: .realtimeInput,
+                language: "zh",
+                confidence: nil,
+                completedAt: Date(timeIntervalSince1970: 1_000),
+                usage: nil
+            )
+        )
+        _ = await bridge.resolve(
+            ConversationToolCall(
+                callID: ConversationToolCallID("call_prepare_same_turn")!,
+                name: "submit_work",
+                argumentsJSON: #"{"objective":"创建后台测试任务"}"#,
+                responseID: nil
+            ),
+            sourceTurnID: sourceTurnID
+        )
+
+        let result = await bridge.resolve(
+            ConversationToolCall(
+                callID: ConversationToolCallID("call_confirm_same_turn")!,
+                name: "confirm_work",
+                argumentsJSON: "{}",
+                responseID: nil
+            ),
+            sourceTurnID: sourceTurnID
+        )
+
+        XCTAssertNil(service.submittedObjective)
+        XCTAssertTrue(result.output.contains(#""status":"rejected""#))
+    }
+
+    func testConversationWorkBridgeDiscardsDraftWithoutCreatingWork() async {
+        let service = TestWorkService()
+        let bridge = ConversationWorkBridge(
+            service: service,
+            transcriptWaitAttempts: 0
+        )
+        bridge.beginConversationSession()
+        let sourceTurnID = ConversationTurnID()
+        bridge.recordFinalTranscript(
+            FinalUserTranscript(
+                turnID: sourceTurnID,
+                text: "创建一个后台测试任务。",
+                source: .realtimeInput,
+                language: "zh",
+                confidence: nil,
+                completedAt: Date(timeIntervalSince1970: 1_000),
+                usage: nil
+            )
+        )
+        _ = await bridge.resolve(
+            ConversationToolCall(
+                callID: ConversationToolCallID("call_prepare_discard")!,
+                name: "submit_work",
+                argumentsJSON: #"{"objective":"创建后台测试任务"}"#,
+                responseID: nil
+            ),
+            sourceTurnID: sourceTurnID
+        )
+
+        let result = await bridge.resolve(
+            ConversationToolCall(
+                callID: ConversationToolCallID("call_discard")!,
+                name: "discard_work_draft",
+                argumentsJSON: "{}",
+                responseID: nil
+            ),
+            sourceTurnID: ConversationTurnID()
+        )
+
+        XCTAssertNil(service.submittedObjective)
+        XCTAssertTrue(result.output.contains(#""status":"discarded""#))
     }
 
     func testTurnCorrelatorActivatesProviderContinuationAfterToolResponse() {
@@ -1086,159 +1416,44 @@ final class DictationProviderTests: XCTestCase {
         coordinator.stop()
     }
 
-    func testTalkSubmitsBackgroundWorkWithoutDisconnectingConversation() async throws {
-        let recorder = ConversationLifecycleRecorder()
-        let provider = TestConversationProvider(recorder: recorder)
-        let workService = TestWorkService()
-        let coordinator = ConversationCoordinator(
-            activationMode: .shortcut,
-            wakeWordProvider: MockWakeWordService(),
-            conversationProvider: provider,
-            audioService: TestConversationAudioService(recorder: recorder),
-            presentation: testConversationPresentation(),
-            workBridge: ConversationWorkBridge(service: workService)
-        )
-        let userItemID = try XCTUnwrap(ConversationProviderItemID("user_work"))
-        let toolResponseID = try XCTUnwrap(
-            ConversationProviderResponseID("response_work_tool")
-        )
-        let acknowledgementResponseID = try XCTUnwrap(
-            ConversationProviderResponseID("response_work_acknowledgement")
-        )
-
-        coordinator.startConversationFromShortcut()
-        await waitUntilEventually { provider.isConnected }
-        provider.emit(.userSpeechStarted(itemID: userItemID))
-        provider.emit(.userSpeechStopped(itemID: userItemID))
-        provider.emit(.assistantResponseStarted(responseID: toolResponseID))
-        provider.emit(
-            .toolCall(
-                ConversationToolCall(
-                    callID: ConversationToolCallID("call_background_work")!,
-                    name: "submit_work",
-                    argumentsJSON: #"{"objective":"验证后台任务不阻塞语音对话"}"#,
-                    responseID: toolResponseID
-                )
-            )
-        )
-        provider.emit(
-            .responseCompleted(responseID: toolResponseID, usage: .zero)
-        )
-
-        await waitUntilEventually { provider.toolOutputs.count == 1 }
-        XCTAssertTrue(provider.isConnected)
-        XCTAssertTrue(coordinator.isConversationActive)
-        XCTAssertTrue(provider.toolOutputs[0].1.contains(#""status":"accepted""#))
-
-        provider.emit(.assistantResponseStarted(responseID: acknowledgementResponseID))
-        provider.emit(
-            .responseCompleted(responseID: acknowledgementResponseID, usage: .zero)
-        )
-        workService.complete()
-
-        await waitUntilEventually { provider.completedWorkResults.count == 1 }
-        XCTAssertTrue(provider.isConnected)
-        XCTAssertTrue(coordinator.isConversationActive)
-        XCTAssertEqual(coordinator.latestWork?.state, .completed)
-        XCTAssertTrue(
-            provider.completedWorkResults[0].contains("没有访问或修改任何外部内容")
-        )
-        coordinator.stop()
-    }
-
-    func testCompletedWorkWaitsForUserAndRetriesAfterInterruptedDelivery() async throws {
+    func testTalkIgnoresUnconfirmedSpeechEventDuringAssistantPlayback() async throws {
         let recorder = ConversationLifecycleRecorder()
         let audioService = TestConversationAudioService(recorder: recorder)
         let provider = TestConversationProvider(recorder: recorder)
-        let workService = TestWorkService()
         let coordinator = ConversationCoordinator(
             activationMode: .shortcut,
             wakeWordProvider: MockWakeWordService(),
             conversationProvider: provider,
             audioService: audioService,
-            presentation: testConversationPresentation(),
-            workBridge: ConversationWorkBridge(service: workService)
+            presentation: testConversationPresentation()
         )
-        let firstUserItemID = try XCTUnwrap(
-            ConversationProviderItemID("user_submit_work")
-        )
-        let toolResponseID = try XCTUnwrap(
-            ConversationProviderResponseID("response_submit_work")
-        )
-        let acknowledgementResponseID = try XCTUnwrap(
-            ConversationProviderResponseID("response_work_ack")
+        let userItemID = try XCTUnwrap(ConversationProviderItemID("user_first"))
+        let responseID = try XCTUnwrap(ConversationProviderResponseID("response_first"))
+        let identity = ConversationProviderEventIdentity(
+            responseID: responseID,
+            itemID: ConversationProviderItemID("assistant_first")
         )
 
         coordinator.startConversationFromShortcut()
-        await waitUntilEventually { provider.isConnected }
-        provider.emit(.userSpeechStarted(itemID: firstUserItemID))
-        provider.emit(.userSpeechStopped(itemID: firstUserItemID))
-        provider.emit(.assistantResponseStarted(responseID: toolResponseID))
-        provider.emit(
-            .toolCall(
-                ConversationToolCall(
-                    callID: ConversationToolCallID("call_interruptible_work")!,
-                    name: "submit_work",
-                    argumentsJSON: #"{"objective":"验证结果交付不会抢话"}"#,
-                    responseID: toolResponseID
-                )
-            )
-        )
-        provider.emit(
-            .responseCompleted(responseID: toolResponseID, usage: .zero)
-        )
-        await waitUntilEventually { provider.toolOutputs.count == 1 }
-        provider.emit(.assistantResponseStarted(responseID: acknowledgementResponseID))
-        provider.emit(
-            .responseCompleted(responseID: acknowledgementResponseID, usage: .zero)
-        )
+        await waitUntil { provider.isConnected }
+        provider.emit(.userSpeechStarted(itemID: userItemID))
+        provider.emit(.userSpeechStopped(itemID: userItemID))
+        provider.emit(.assistantResponseStarted(responseID: responseID))
+        provider.emit(.assistantItemStarted(identity))
+        provider.emit(.assistantAudio(identity: identity, data: Data([0, 1])))
+        let stopCountBeforeNoise = audioService.assistantPlaybackStopCount
 
-        let busyUserItemID = try XCTUnwrap(
-            ConversationProviderItemID("user_busy_during_work_completion")
-        )
-        provider.emit(.userSpeechStarted(itemID: busyUserItemID))
-        workService.complete()
-        await waitUntilEventually { coordinator.latestWork?.state == .completed }
-        try await Task.sleep(for: .milliseconds(350))
+        let noiseItemID = try XCTUnwrap(ConversationProviderItemID("playback_noise"))
+        provider.emit(.userSpeechStarted(itemID: noiseItemID))
+        provider.emit(.userSpeechStopped(itemID: noiseItemID))
+        provider.emit(.assistantAudio(identity: identity, data: Data([2, 3])))
 
-        XCTAssertEqual(provider.completedWorkResults.count, 0)
-        XCTAssertEqual(coordinator.state, .userSpeaking)
-
-        provider.emit(.userSpeechStopped(itemID: busyUserItemID))
-        let busyTurnResponseID = try XCTUnwrap(
-            ConversationProviderResponseID("response_busy_user")
+        XCTAssertEqual(coordinator.state, .assistantSpeaking)
+        XCTAssertEqual(
+            audioService.assistantPlaybackStopCount,
+            stopCountBeforeNoise
         )
-        provider.emit(.assistantResponseStarted(responseID: busyTurnResponseID))
-        provider.emit(
-            .responseCompleted(responseID: busyTurnResponseID, usage: .zero)
-        )
-        await waitUntilEventually { provider.completedWorkResults.count == 1 }
-
-        let deliveryResponseID = try XCTUnwrap(
-            ConversationProviderResponseID("response_work_delivery")
-        )
-        provider.emit(.assistantResponseStarted(responseID: deliveryResponseID))
-        let interruptingUserItemID = try XCTUnwrap(
-            ConversationProviderItemID("user_interrupts_work_delivery")
-        )
-        provider.emit(.userSpeechStarted(itemID: interruptingUserItemID))
-        provider.emit(.responseCancelled(responseID: deliveryResponseID))
-
-        XCTAssertEqual(provider.assistantCancellationCount, 1)
-        XCTAssertEqual(coordinator.state, .userSpeaking)
-
-        provider.emit(.userSpeechStopped(itemID: interruptingUserItemID))
-        let interruptingTurnResponseID = try XCTUnwrap(
-            ConversationProviderResponseID("response_after_interruption")
-        )
-        provider.emit(.assistantResponseStarted(responseID: interruptingTurnResponseID))
-        provider.emit(
-            .responseCompleted(responseID: interruptingTurnResponseID, usage: .zero)
-        )
-        await waitUntilEventually { provider.completedWorkResults.count == 2 }
-
-        XCTAssertTrue(provider.isConnected)
-        XCTAssertTrue(coordinator.isConversationActive)
+        XCTAssertEqual(audioService.enqueuedAssistantAudioCount, 2)
         coordinator.stop()
     }
 
@@ -1272,6 +1487,7 @@ final class DictationProviderTests: XCTestCase {
         provider.emit(.assistantAudio(identity: firstIdentity, data: Data([0, 1])))
         XCTAssertEqual(audioService.enqueuedAssistantAudioCount, 1)
 
+        audioService.hasConfirmedInterruption = true
         provider.emit(
             .userSpeechStarted(
                 itemID: ConversationProviderItemID("user_2")
@@ -1316,6 +1532,7 @@ final class DictationProviderTests: XCTestCase {
         provider.emit(.assistantItemStarted(oldIdentity))
         provider.emit(.assistantAudio(identity: oldIdentity, data: Data([0, 1])))
 
+        audioService.hasConfirmedInterruption = true
         provider.emit(.userSpeechStarted(itemID: ConversationProviderItemID("user_current")))
         provider.emit(.userSpeechStopped(itemID: ConversationProviderItemID("user_current")))
         provider.emit(.assistantResponseStarted(responseID: currentResponseID))
@@ -1337,11 +1554,11 @@ final class DictationProviderTests: XCTestCase {
         var recognizer = ModifierChordRecognizer()
 
         XCTAssertNil(recognizer.handleFlagsChanged([.function]))
+        XCTAssertTrue(recognizer.suppressesCurrentFlagsEvent)
         let action = recognizer.handleFlagsChanged([])
         XCTAssertEqual(action, .dictation)
-        XCTAssertTrue(action?.suppressesSystemReleaseEvent == true)
-        XCTAssertFalse(GlobalHotKeyAction.conversation.suppressesSystemReleaseEvent)
-        XCTAssertFalse(GlobalHotKeyAction.screenRegion.suppressesSystemReleaseEvent)
+        XCTAssertTrue(recognizer.suppressesCurrentFlagsEvent)
+        XCTAssertFalse(recognizer.shouldConsumeFunctionKeyEvent)
     }
 
     func testVoiceAgentChordSupportsBothModifierOrders() {
@@ -1394,9 +1611,13 @@ final class DictationProviderTests: XCTestCase {
         var recognizer = ModifierChordRecognizer()
 
         XCTAssertNil(recognizer.handleFlagsChanged([.function]))
+        XCTAssertTrue(recognizer.suppressesCurrentFlagsEvent)
         XCTAssertNil(recognizer.handleFlagsChanged([.function, .command]))
+        XCTAssertFalse(recognizer.suppressesCurrentFlagsEvent)
         XCTAssertNil(recognizer.handleFlagsChanged([.function]))
+        XCTAssertTrue(recognizer.suppressesCurrentFlagsEvent)
         XCTAssertNil(recognizer.handleFlagsChanged([]))
+        XCTAssertTrue(recognizer.suppressesCurrentFlagsEvent)
     }
 
     func testConversationExpressionsUseProductKaomoji() {
@@ -1469,7 +1690,7 @@ final class DictationProviderTests: XCTestCase {
         model.phase = .conversation(expression: .awake, source: .idle)
 
         XCTAssertEqual(model.currentSize, model.compactSize)
-        XCTAssertEqual(ConversationResponseLoopGuard.safety.maximumResponses, 10)
+        XCTAssertEqual(ConversationResponseLoopGuard.safety.maximumResponses, 4)
         XCTAssertEqual(ConversationResponseLoopGuard.safety.window, 30)
     }
 
@@ -1561,14 +1782,20 @@ final class DictationProviderTests: XCTestCase {
         coordinator.stop()
     }
 
-    func testExpandedIslandWindowLeavesStableShadowPadding() {
+    func testOverlayWindowLeavesStableShadowPaddingAcrossExpandedSurfaces() {
         XCTAssertEqual(
             InputOverlaySizing.windowSize.width,
-            InputOverlaySizing.expandedSize.width + InputOverlaySizing.shadowPadding * 2
+            max(
+                InputOverlaySizing.expandedSize.width,
+                InputOverlaySizing.settingsSize.width
+            )
         )
         XCTAssertEqual(
             InputOverlaySizing.windowSize.height,
-            InputOverlaySizing.expandedSize.height + InputOverlaySizing.shadowPadding * 2
+            max(
+                InputOverlaySizing.expandedSize.height,
+                InputOverlaySizing.settingsSize.height
+            ) + InputOverlaySizing.shadowPadding
         )
     }
 
@@ -1578,15 +1805,6 @@ final class DictationProviderTests: XCTestCase {
         for _ in 0..<50 {
             if condition() { return }
             await Task.yield()
-        }
-    }
-
-    private func waitUntilEventually(
-        _ condition: @escaping @MainActor () -> Bool
-    ) async {
-        for _ in 0..<200 {
-            if condition() { return }
-            try? await Task.sleep(for: .milliseconds(10))
         }
     }
 
@@ -1601,10 +1819,12 @@ private final class ConversationLifecycleRecorder {
 private final class TestConversationAudioService: ConversationAudioServicing {
     var onInputChunk: ((AudioChunk) -> Void)?
     var onInputLevels: ((ConversationAudioLevels) -> Void)?
+    var onInputGateTransition: ((ConversationInputGateTransition) -> Void)?
     var onOutputLevels: ((ConversationAudioLevels) -> Void)?
     var onPlaybackFinished: (() -> Void)?
     var onFailure: ((Error) -> Void)?
     private(set) var isRunning = false
+    var hasConfirmedInterruption = false
     var startError: Error?
     var emitsChunkOnStart = false
     private(set) var enqueuedAssistantAudioCount = 0
@@ -1676,9 +1896,8 @@ private final class TestConversationProvider: ConversationProviding {
     private(set) var appendedChunkCount = 0
     private(set) var openingGreetingRequestCount = 0
     private(set) var screenContexts: [ConversationImage] = []
-    private(set) var toolOutputs: [(ConversationToolCallID, String)] = []
+    private(set) var toolOutputs: [(ConversationToolCallID, String, Bool)] = []
     private(set) var completedWorkResults: [String] = []
-    private(set) var assistantCancellationCount = 0
 
     private let recorder: ConversationLifecycleRecorder
 
@@ -1701,6 +1920,10 @@ private final class TestConversationProvider: ConversationProviding {
         screenContexts.append(image)
     }
 
+    func requestUserResponse() async throws {}
+
+    func discardUserAudioItem(_ itemID: ConversationProviderItemID) {}
+
     func requestOpeningGreeting() {
         guard isConnected else { return }
         openingGreetingRequestCount += 1
@@ -1709,18 +1932,17 @@ private final class TestConversationProvider: ConversationProviding {
 
     func provideToolOutput(
         callID: ConversationToolCallID,
-        output: String
+        output: String,
+        createsResponse: Bool
     ) async throws {
-        toolOutputs.append((callID, output))
+        toolOutputs.append((callID, output, createsResponse))
     }
 
     func presentCompletedWork(_ result: String) async throws {
         completedWorkResults.append(result)
     }
 
-    func cancelAssistantResponse() {
-        assistantCancellationCount += 1
-    }
+    func cancelAssistantResponse() {}
 
     func truncateAssistantResponse(
         itemID: ConversationProviderItemID,
@@ -1785,11 +2007,6 @@ private final class TestWorkService: WorkServicing {
     private(set) var submissionKey: String?
     private(set) var statusRequestIDs: [WorkID] = []
     private(set) var cancelRequestIDs: [WorkID] = []
-    private var currentState: WorkState = .running
-
-    func complete() {
-        currentState = .completed
-    }
 
     func submit(
         objective: String,
@@ -1803,7 +2020,7 @@ private final class TestWorkService: WorkServicing {
 
     func status(for workID: WorkID) async throws -> WorkRecord {
         statusRequestIDs.append(workID)
-        return record(state: currentState)
+        return record(state: .running)
     }
 
     func cancel(_ workID: WorkID) async throws -> WorkRecord {
@@ -1818,15 +2035,8 @@ private final class TestWorkService: WorkServicing {
             objectiveSource: "model_derived",
             executor: "mock_read_only",
             state: state,
-            publicActivity: state == .cancelled
-                ? "已取消"
-                : state == .completed ? "已完成" : "正在执行",
-            result: state == .completed
-                ? WorkResult(
-                    summary: "Agent 主干已完成一次只读验证。",
-                    detail: "本次没有访问或修改任何外部内容。"
-                )
-                : nil,
+            publicActivity: state == .cancelled ? "已取消" : "正在执行",
+            result: nil,
             error: nil,
             createdAt: "2026-08-02T00:00:00.000Z",
             updatedAt: "2026-08-02T00:00:00.000Z"

@@ -76,6 +76,8 @@ protocol ConversationPresenting: AnyObject {
 final class InputOverlayConversationPresenter: ConversationPresenting {
     private let model: InputOverlayModel
     private let controller: InputOverlayController?
+    private var lastWaveformUpdateTime: TimeInterval = 0
+    private static let waveformUpdateInterval: TimeInterval = 1.0 / 30.0
 
     init(
         model: InputOverlayModel,
@@ -92,6 +94,7 @@ final class InputOverlayConversationPresenter: ConversationPresenting {
         model.audioLevel = 0
         model.isVoiceActive = false
         model.waveformLevels = InputOverlayModel.silentWaveformLevels
+        lastWaveformUpdateTime = 0
         let phase = InputOverlayPhase.conversation(
             expression: expression,
             source: source
@@ -102,21 +105,20 @@ final class InputOverlayConversationPresenter: ConversationPresenting {
 
     func updateWaveform(
         _ levels: ConversationAudioLevels,
-        source: ConversationWaveformSource
+        source _: ConversationWaveformSource
     ) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard levels.level == 0
+                || now - lastWaveformUpdateTime >= Self.waveformUpdateInterval else {
+            return
+        }
+        lastWaveformUpdateTime = now
         model.audioLevel = levels.level
         model.isVoiceActive = AudioLevelMeter.hasVisualActivity(levels.level)
         model.waveformLevels = levels.waveformLevels
 
-        let expression: ConversationExpression = source == .assistant
-            ? .speaking
-            : .attentive
-        let phase = InputOverlayPhase.conversation(
-            expression: expression,
-            source: source
-        )
-        model.phase = phase
-        controller?.show(phase)
+        // State transitions own the window. Audio arrives many times per second,
+        // so a meter update must not recalculate, resize, or re-order the panel.
     }
 
     func hide() {

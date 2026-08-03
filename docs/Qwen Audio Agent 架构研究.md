@@ -213,7 +213,7 @@ kAudioUnitSubType_VoiceProcessingIO
 
 但需要准确区分：这套实现用于 macOS TUI helper。Electron Desktop 使用浏览器 `getUserMedia` 的 echo cancellation、noise suppression 和 auto gain，不代表所有 Qwen 客户端都享有同样的原生音频质量。
 
-Friday 当前使用 `AVAudioEngine` 并尝试系统 Voice Processing，失败后退回软件回声门。下一步应做独立的 VoiceProcessingIO 技术验证，以真实 Mac 上“完整播放、自然插话、不自我打断”为验收标准，而不是直接照抄源码替换现有音频服务。
+Friday 已参考这一边界实现独立的 `VoiceProcessingAudioUnit`，但没有照抄 Qwen 的完整 helper：Friday 保持 24 kHz Realtime 传输格式，在本地以 48 kHz 连接播放参考和消回声麦克风，并在上层增加自适应近场输入门。VoiceProcessingIO 无法启动时降级为播放期间不上行麦克风的安全半双工。真实 Mac 已验证采集、播放与连续重启；“完整播放、自然插话、不被远处声音误触发”仍需真人声学验收。
 
 ## 10. 持久化与恢复
 

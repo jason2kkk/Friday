@@ -182,38 +182,67 @@ final class ConversationWorkBridge {
     var onTerminalWork: ((WorkRecord) -> Void)?
 
     private let service: any WorkServicing
+    private let transcriptWaitAttempts: Int
+    private let transcriptWaitInterval: Duration
     private var latestWorkID: WorkID?
+    private var latestDraftID: WorkDraftID?
     private var observationTasks: [WorkID: Task<Void, Never>] = [:]
     private var deliveredTerminalWorkIDs: Set<WorkID> = []
+    private var finalTranscripts: [ConversationTurnID: FinalUserTranscript] = [:]
+    private var failedTranscriptionTurnIDs: Set<ConversationTurnID> = []
+    private var drafts: [WorkDraftID: WorkDraft] = [:]
+    private var draftIDBySubmissionCallID: [ConversationToolCallID: WorkDraftID] = [:]
 
-    init(service: (any WorkServicing)? = nil) {
+    init(
+        service: (any WorkServicing)? = nil,
+        transcriptWaitAttempts: Int = 24,
+        transcriptWaitInterval: Duration = .milliseconds(50)
+    ) {
         self.service = service ?? LocalWorkServiceClient()
+        self.transcriptWaitAttempts = max(0, transcriptWaitAttempts)
+        self.transcriptWaitInterval = transcriptWaitInterval
     }
 
-    func resolve(_ call: ConversationToolCall) async -> ConversationToolResolution {
+    func beginConversationSession() {
+        clearConversationDrafts()
+    }
+
+    func endConversationSession() {
+        clearConversationDrafts()
+    }
+
+    func recordFinalTranscript(_ transcript: FinalUserTranscript) {
+        finalTranscripts[transcript.turnID] = transcript
+        failedTranscriptionTurnIDs.remove(transcript.turnID)
+        for draftID in Array(drafts.keys) {
+            guard var draft = drafts[draftID],
+                  draft.sourceTurnID == transcript.turnID,
+                  draft.state == .awaitingTranscript else { continue }
+            draft.sourceTranscript = transcript
+            draft.state = .awaitingConfirmation
+            drafts[draftID] = draft
+        }
+    }
+
+    func markFinalTranscriptUnavailable(for turnID: ConversationTurnID) {
+        guard finalTranscripts[turnID] == nil else { return }
+        failedTranscriptionTurnIDs.insert(turnID)
+    }
+
+    func resolve(
+        _ call: ConversationToolCall,
+        sourceTurnID: ConversationTurnID? = nil
+    ) async -> ConversationToolResolution {
         do {
             switch call.name {
             case "submit_work":
-                let arguments = try decodeArguments(call.argumentsJSON)
-                guard let objective = normalizedString(arguments["objective"]) else {
-                    throw ToolError.invalidArguments("缺少可执行的任务目标。")
-                }
-                let work = try await service.submit(
-                    objective: objective,
-                    submissionKey: "realtime:\(call.callID.rawValue)",
-                    objectiveSource: "model_derived"
-                )
-                latestWorkID = work.id
-                return ConversationToolResolution(
-                    callID: call.callID,
-                    output: encodeOutput([
-                        "status": "accepted",
-                        "work_id": work.id.rawValue,
-                        "state": work.state.rawValue,
-                        "message": "任务已在后台创建，当前语音对话可以继续。"
-                    ]),
-                    workToObserve: work.state.isTerminal ? nil : work.id
-                )
+                return try await prepareDraft(call, sourceTurnID: sourceTurnID)
+
+            case "confirm_work":
+                return try await confirmDraft(call, confirmationTurnID: sourceTurnID)
+
+            case "discard_work_draft":
+                return try discardDraft(call)
 
             case "get_work_status":
                 let workID = try requestedWorkID(from: call.argumentsJSON)
@@ -273,6 +302,215 @@ final class ConversationWorkBridge {
             }
             observationTasks.removeValue(forKey: workID)
         }
+    }
+
+    private func prepareDraft(
+        _ call: ConversationToolCall,
+        sourceTurnID: ConversationTurnID?
+    ) async throws -> ConversationToolResolution {
+        guard let sourceTurnID else { throw ToolError.unmatchedTurn }
+        let arguments = try decodeArguments(call.argumentsJSON)
+        guard let objective = normalizedString(arguments["objective"]) else {
+            throw ToolError.invalidArguments("缺少可核对的任务目标。")
+        }
+
+        let draftID: WorkDraftID
+        if let existingDraftID = draftIDBySubmissionCallID[call.callID] {
+            draftID = existingDraftID
+        } else {
+            draftID = WorkDraftID.make()
+            drafts[draftID] = WorkDraft(
+                id: draftID,
+                sourceTurnID: sourceTurnID,
+                submissionCallID: call.callID,
+                objective: objective,
+                sourceTranscript: finalTranscripts[sourceTurnID],
+                state: finalTranscripts[sourceTurnID] == nil
+                    ? .awaitingTranscript
+                    : .awaitingConfirmation,
+                submittedWorkID: nil
+            )
+            draftIDBySubmissionCallID[call.callID] = draftID
+        }
+        latestDraftID = draftID
+
+        if failedTranscriptionTurnIDs.contains(sourceTurnID) {
+            return transcriptUnavailableResolution(callID: call.callID, draftID: draftID)
+        }
+        if finalTranscripts[sourceTurnID] == nil {
+            _ = await waitForFinalTranscript(turnID: sourceTurnID)
+        }
+        guard var draft = drafts[draftID] else { throw ToolError.noRecentDraft }
+        if let transcript = finalTranscripts[sourceTurnID] {
+            draft.sourceTranscript = transcript
+            draft.state = .awaitingConfirmation
+            drafts[draftID] = draft
+        }
+        guard draft.sourceTranscript != nil else {
+            return transcriptUnavailableResolution(callID: call.callID, draftID: draftID)
+        }
+
+        return ConversationToolResolution(
+            callID: call.callID,
+            output: encodeOutput([
+                "status": "awaiting_confirmation",
+                "draft_id": draftID.rawValue,
+                "objective": draft.objective,
+                "message": "这只是任务草稿，尚未创建后台任务。请复述目标并让用户明确说‘确认提交’或‘取消’。"
+            ]),
+            workToObserve: nil
+        )
+    }
+
+    private func confirmDraft(
+        _ call: ConversationToolCall,
+        confirmationTurnID: ConversationTurnID?
+    ) async throws -> ConversationToolResolution {
+        guard let confirmationTurnID else { throw ToolError.unmatchedTurn }
+        let draftID = try requestedDraftID(from: call.argumentsJSON)
+        guard var draft = drafts[draftID] else { throw ToolError.noRecentDraft }
+        guard draft.state != .discarded else { throw ToolError.discardedDraft }
+        guard confirmationTurnID != draft.sourceTurnID else {
+            throw ToolError.unverifiedConfirmation
+        }
+
+        if draft.state == .submitted, let workID = draft.submittedWorkID {
+            let work = try await service.status(for: workID)
+            latestWorkID = work.id
+            return acceptedResolution(callID: call.callID, work: work)
+        }
+
+        if failedTranscriptionTurnIDs.contains(confirmationTurnID) {
+            throw ToolError.unverifiedConfirmation
+        }
+        if finalTranscripts[confirmationTurnID] == nil {
+            _ = await waitForFinalTranscript(turnID: confirmationTurnID)
+        }
+        guard let confirmation = finalTranscripts[confirmationTurnID],
+              isExplicitConfirmation(confirmation.text) else {
+            throw ToolError.unverifiedConfirmation
+        }
+        guard draft.sourceTranscript != nil else {
+            throw ToolError.missingSourceTranscript
+        }
+
+        draft.state = .submitting
+        drafts[draftID] = draft
+        do {
+            let work = try await service.submit(
+                objective: draft.objective,
+                submissionKey: "draft:\(draftID.rawValue)",
+                objectiveSource: "model_derived"
+            )
+            draft.state = .submitted
+            draft.submittedWorkID = work.id
+            drafts[draftID] = draft
+            latestWorkID = work.id
+            return acceptedResolution(callID: call.callID, work: work)
+        } catch {
+            draft.state = .awaitingConfirmation
+            drafts[draftID] = draft
+            throw error
+        }
+    }
+
+    private func discardDraft(
+        _ call: ConversationToolCall
+    ) throws -> ConversationToolResolution {
+        let draftID = try requestedDraftID(from: call.argumentsJSON)
+        guard var draft = drafts[draftID] else { throw ToolError.noRecentDraft }
+        guard draft.state != .submitted else { throw ToolError.alreadySubmittedDraft }
+        draft.state = .discarded
+        drafts[draftID] = draft
+        return ConversationToolResolution(
+            callID: call.callID,
+            output: encodeOutput([
+                "status": "discarded",
+                "draft_id": draftID.rawValue,
+                "message": "任务草稿已取消，没有创建后台任务。"
+            ]),
+            workToObserve: nil
+        )
+    }
+
+    private func acceptedResolution(
+        callID: ConversationToolCallID,
+        work: WorkRecord
+    ) -> ConversationToolResolution {
+        ConversationToolResolution(
+            callID: callID,
+            output: encodeOutput([
+                "status": "accepted",
+                "work_id": work.id.rawValue,
+                "state": work.state.rawValue,
+                "message": "已确认并创建后台测试任务，当前语音对话可以继续。"
+            ]),
+            workToObserve: work.state.isTerminal ? nil : work.id
+        )
+    }
+
+    private func transcriptUnavailableResolution(
+        callID: ConversationToolCallID,
+        draftID: WorkDraftID
+    ) -> ConversationToolResolution {
+        ConversationToolResolution(
+            callID: callID,
+            output: encodeOutput([
+                "status": "transcript_unavailable",
+                "draft_id": draftID.rawValue,
+                "message": "这一轮没有可核对的最终用户转写，因此没有创建后台任务。请重新说出完整任务；在最终转写 Provider 启用前，Friday 只能继续普通对话。"
+            ]),
+            workToObserve: nil
+        )
+    }
+
+    private func waitForFinalTranscript(
+        turnID: ConversationTurnID
+    ) async -> FinalUserTranscript? {
+        for _ in 0..<transcriptWaitAttempts {
+            if let transcript = finalTranscripts[turnID] { return transcript }
+            if failedTranscriptionTurnIDs.contains(turnID) { return nil }
+            try? await Task.sleep(for: transcriptWaitInterval)
+            guard !Task.isCancelled else { return nil }
+        }
+        return finalTranscripts[turnID]
+    }
+
+    private func requestedDraftID(from argumentsJSON: String) throws -> WorkDraftID {
+        let arguments = try decodeArguments(argumentsJSON)
+        if let rawDraftID = normalizedString(arguments["draft_id"]) {
+            guard let draftID = WorkDraftID(rawDraftID) else {
+                throw ToolError.invalidArguments("任务草稿编号无效。")
+            }
+            return draftID
+        }
+        guard let latestDraftID else { throw ToolError.noRecentDraft }
+        return latestDraftID
+    }
+
+    private func isExplicitConfirmation(_ value: String) -> Bool {
+        let normalized = value
+            .lowercased()
+            .replacingOccurrences(
+                of: #"[\s，。！？、,.!?]+"#,
+                with: "",
+                options: .regularExpression
+            )
+        return [
+            "确认提交",
+            "确认创建",
+            "确认执行",
+            "confirm",
+            "confirmed"
+        ].contains(normalized)
+    }
+
+    private func clearConversationDrafts() {
+        finalTranscripts.removeAll(keepingCapacity: false)
+        failedTranscriptionTurnIDs.removeAll(keepingCapacity: false)
+        drafts.removeAll(keepingCapacity: false)
+        draftIDBySubmissionCallID.removeAll(keepingCapacity: false)
+        latestDraftID = nil
     }
 
     private func requestedWorkID(from argumentsJSON: String) throws -> WorkID {
@@ -350,6 +588,12 @@ final class ConversationWorkBridge {
 private enum ToolError: LocalizedError {
     case invalidArguments(String)
     case noRecentWork
+    case noRecentDraft
+    case unmatchedTurn
+    case missingSourceTranscript
+    case unverifiedConfirmation
+    case discardedDraft
+    case alreadySubmittedDraft
     case unsupportedTool
 
     var errorDescription: String? {
@@ -358,6 +602,18 @@ private enum ToolError: LocalizedError {
             return message
         case .noRecentWork:
             return "当前对话里没有可以查询或取消的后台任务。"
+        case .noRecentDraft:
+            return "当前对话里没有等待确认的任务草稿。"
+        case .unmatchedTurn:
+            return "Friday 无法确认这次请求属于哪一轮对话，因此没有执行。"
+        case .missingSourceTranscript:
+            return "原任务没有可靠的最终用户转写，因此不能提交。请重新说出完整任务。"
+        case .unverifiedConfirmation:
+            return "Friday 没有从最终用户转写中确认到‘确认提交’，因此没有创建任务。"
+        case .discardedDraft:
+            return "这个任务草稿已经取消。"
+        case .alreadySubmittedDraft:
+            return "这个任务草稿已经提交；如需停止，请取消对应的后台任务。"
         case .unsupportedTool:
             return "Friday 暂不支持这个任务操作。"
         }

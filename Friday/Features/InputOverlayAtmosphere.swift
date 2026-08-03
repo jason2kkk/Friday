@@ -1,5 +1,5 @@
-// 功能：为顶部灵动岛绘制能区分监听、思考等状态的低透明度渐变和弥散氛围。
-// 职责：把工作流阶段映射为颜色主题，稳定背景布局与动画节奏，并响应系统降低动态效果设置。
+// 功能：为紧凑灵动岛绘制状态氛围，并为展开矩形叠加顶部可读性渐变。
+// 职责：映射工作流颜色、稳定装饰背景布局与动画，并响应系统降低动态效果设置。
 // 边界：只负责装饰性背景，不改变浮层尺寸、业务状态、交互命中区域或内容文案。
 
 import SwiftUI
@@ -38,6 +38,7 @@ enum InputOverlayAtmosphereLayout {
 
 struct InputOverlayAtmosphereView: View {
     let phase: InputOverlayPhase
+    let isExpanded: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isDrifting = false
@@ -48,29 +49,35 @@ struct InputOverlayAtmosphereView: View {
             let sideWidth = geometry.size.width * InputOverlayAtmosphereLayout.sideFraction
 
             ZStack {
-                Color.black
+                if isExpanded {
+                    ExpandedIslandReadabilityBackground()
+                } else {
+                    ZStack {
+                        Color.black
 
-                HStack(spacing: 0) {
-                    sideDiffusion(
-                        palette: palette,
-                        width: sideWidth,
-                        height: geometry.size.height,
-                        edge: .leading
-                    )
+                        HStack(spacing: 0) {
+                            sideDiffusion(
+                                palette: palette,
+                                width: sideWidth,
+                                height: geometry.size.height,
+                                edge: .leading
+                            )
 
-                    Spacer(minLength: 0)
+                            Spacer(minLength: 0)
 
-                    sideDiffusion(
-                        palette: palette,
-                        width: sideWidth,
-                        height: geometry.size.height,
-                        edge: .trailing
-                    )
+                            sideDiffusion(
+                                palette: palette,
+                                width: sideWidth,
+                                height: geometry.size.height,
+                                edge: .trailing
+                            )
+                        }
+                        .opacity(palette.opacity)
+                        .blendMode(.screen)
+                    }
+                    .compositingGroup()
                 }
-                .opacity(palette.opacity)
-                .blendMode(.screen)
             }
-            .compositingGroup()
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -192,6 +199,29 @@ struct InputOverlayAtmosphereView: View {
             )
         }
     }
+}
+
+private struct ExpandedIslandReadabilityBackground: View {
+    var body: some View {
+        topReadabilityGradient
+    }
+
+    private var topReadabilityGradient: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .black, location: 0),
+                .init(color: .black, location: 0.1),
+                .init(color: .black.opacity(0.82), location: 0.2),
+                .init(color: .black.opacity(0.3), location: 0.31),
+                .init(color: .clear, location: 0.5),
+                .init(color: .clear, location: 1)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .allowsHitTesting(false)
+    }
+
 }
 
 private struct AtmospherePalette {

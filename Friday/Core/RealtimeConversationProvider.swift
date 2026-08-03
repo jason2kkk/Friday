@@ -181,6 +181,31 @@ final class RealtimeConversationProvider: ConversationProviding {
         )
     }
 
+    func requestUserResponse() async throws {
+        guard let socket = webSocket else {
+            throw ConversationError.transport("Talk session is not connected.")
+        }
+        try await sendJSON(["type": "response.create"], over: socket)
+    }
+
+    func discardUserAudioItem(_ itemID: ConversationProviderItemID) {
+        guard let socket = webSocket else { return }
+        Task { [weak self] in
+            do {
+                try await self?.sendJSON(
+                    [
+                        "type": "conversation.item.delete",
+                        "item_id": itemID.rawValue
+                    ],
+                    over: socket
+                )
+            } catch {
+                guard self?.isDisconnecting == false else { return }
+                self?.logger.warning("Unable to discard a suppressed user audio item")
+            }
+        }
+    }
+
     func requestOpeningGreeting() {
         guard let socket = webSocket else { return }
         Task { [weak self] in
@@ -205,7 +230,8 @@ final class RealtimeConversationProvider: ConversationProviding {
 
     func provideToolOutput(
         callID: ConversationToolCallID,
-        output: String
+        output: String,
+        createsResponse: Bool
     ) async throws {
         guard let socket = webSocket else {
             throw ConversationError.transport("Talk session is not connected.")
@@ -221,6 +247,7 @@ final class RealtimeConversationProvider: ConversationProviding {
             ],
             over: socket
         )
+        guard createsResponse else { return }
         try await sendJSON(
             [
                 "type": "response.create",
@@ -485,6 +512,33 @@ struct ConversationEventParser {
                     itemID: ConversationProviderItemID(event["item_id"] as? String)
                 )
             ]
+        case "conversation.item.input_audio_transcription.completed":
+            guard let itemID = ConversationProviderItemID(event["item_id"] as? String),
+                  let transcript = event["transcript"] as? String else { return [] }
+            return [
+                .userTranscriptionCompleted(
+                    ConversationInputTranscription(
+                        itemID: itemID,
+                        text: transcript,
+                        language: extractLanguage(from: event),
+                        confidence: nil,
+                        usage: extractTranscriptionUsage(from: event)
+                    )
+                )
+            ]
+        case "conversation.item.input_audio_transcription.failed":
+            guard let itemID = ConversationProviderItemID(
+                event["item_id"] as? String
+            ) else { return [] }
+            let error = event["error"] as? [String: Any]
+            return [
+                .userTranscriptionFailed(
+                    ConversationInputTranscriptionFailure(
+                        itemID: itemID,
+                        code: error?["code"] as? String
+                    )
+                )
+            ]
         case "response.created":
             let response = event["response"] as? [String: Any]
             return [
@@ -549,9 +603,20 @@ struct ConversationEventParser {
                         )
                     ]
                 }
-                let message = (details?["error"] as? [String: Any])?["message"] as? String
+                let responseError = details?["error"] as? [String: Any]
+                let message = responseError?["message"] as? String
                     ?? reason
                     ?? "Friday 没有完成这次回复。"
+                if Self.isCancellationWithoutActiveResponse(
+                    code: responseError?["code"] as? String,
+                    message: message
+                ) {
+                    return [
+                        .assistantCancellationIgnored(
+                            code: responseError?["code"] as? String
+                        )
+                    ]
+                }
                 return [.failed(message)]
             }
             return extractToolCalls(from: response, responseID: responseID) + [
@@ -562,10 +627,31 @@ struct ConversationEventParser {
             ]
         case "error":
             let error = event["error"] as? [String: Any]
-            return [.failed(error?["message"] as? String ?? "Friday 语音服务返回错误。")]
+            let code = error?["code"] as? String
+            let message = error?["message"] as? String
+                ?? "Friday 语音服务返回错误。"
+            if Self.isCancellationWithoutActiveResponse(
+                code: code,
+                message: message
+            ) {
+                return [.assistantCancellationIgnored(code: code)]
+            }
+            return [.failed(message)]
         default:
             return []
         }
+    }
+
+    private static func isCancellationWithoutActiveResponse(
+        code: String?,
+        message: String
+    ) -> Bool {
+        if code?.lowercased() == "response_cancel_not_active" {
+            return true
+        }
+        return message.localizedCaseInsensitiveContains(
+            "no active response found"
+        )
     }
 
     private func providerIdentity(
@@ -617,6 +703,35 @@ struct ConversationEventParser {
             outputAudioTokens: outputDetails?["audio_tokens"] as? Int ?? 0,
             totalTokens: usage["total_tokens"] as? Int ?? 0
         )
+    }
+
+    private func extractLanguage(from event: [String: Any]) -> String? {
+        let languages = event["languages"] as? [[String: Any]]
+        return languages?.compactMap { $0["code"] as? String }.first
+    }
+
+    private func extractTranscriptionUsage(
+        from event: [String: Any]
+    ) -> UserTurnTranscriptionUsage? {
+        guard let usage = event["usage"] as? [String: Any] else { return nil }
+        switch usage["type"] as? String {
+        case "tokens":
+            return UserTurnTranscriptionUsage(
+                inputTokens: usage["input_tokens"] as? Int,
+                outputTokens: usage["output_tokens"] as? Int,
+                totalTokens: usage["total_tokens"] as? Int,
+                audioSeconds: nil
+            )
+        case "duration":
+            return UserTurnTranscriptionUsage(
+                inputTokens: nil,
+                outputTokens: nil,
+                totalTokens: nil,
+                audioSeconds: usage["seconds"] as? Double
+            )
+        default:
+            return nil
+        }
     }
 }
 

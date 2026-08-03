@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -35,6 +35,13 @@
 		A10000000000000000000026 /* ConversationPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000029 /* ConversationPresentation.swift */; };
 		A10000000000000000000027 /* ConversationAudioLevels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000030 /* ConversationAudioLevels.swift */; };
 		A10000000000000000000028 /* ConversationWorkBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000031 /* ConversationWorkBridge.swift */; };
+		A10000000000000000000029 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000032 /* Assets.xcassets */; };
+		A10000000000000000000030 /* VoiceProcessingAudioUnit.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000033 /* VoiceProcessingAudioUnit.swift */; };
+		A10000000000000000000034 /* UserTurnTranscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000037 /* UserTurnTranscription.swift */; };
+		A10000000000000000000035 /* WorkDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000038 /* WorkDraft.swift */; };
+		A10000000000000000000036 /* ConversationDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000039 /* ConversationDiagnostics.swift */; };
+		A10000000000000000000037 /* ConversationCoordinatorDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000040 /* ConversationCoordinatorDiagnostics.swift */; };
+		A10000000000000000000038 /* ConversationCoordinatorEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000041 /* ConversationCoordinatorEvents.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -79,6 +86,13 @@
 		A20000000000000000000029 /* ConversationPresentation.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationPresentation.swift; sourceTree = "<group>"; };
 		A20000000000000000000030 /* ConversationAudioLevels.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationAudioLevels.swift; sourceTree = "<group>"; };
 		A20000000000000000000031 /* ConversationWorkBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationWorkBridge.swift; sourceTree = "<group>"; };
+		A20000000000000000000032 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000000000000000000033 /* VoiceProcessingAudioUnit.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VoiceProcessingAudioUnit.swift; sourceTree = "<group>"; };
+		A20000000000000000000037 /* UserTurnTranscription.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = UserTurnTranscription.swift; sourceTree = "<group>"; };
+		A20000000000000000000038 /* WorkDraft.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WorkDraft.swift; sourceTree = "<group>"; };
+		A20000000000000000000039 /* ConversationDiagnostics.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationDiagnostics.swift; sourceTree = "<group>"; };
+		A20000000000000000000040 /* ConversationCoordinatorDiagnostics.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationCoordinatorDiagnostics.swift; sourceTree = "<group>"; };
+		A20000000000000000000041 /* ConversationCoordinatorEvents.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationCoordinatorEvents.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -113,6 +127,7 @@
 			children = (
 				A20000000000000000000001 /* FridayApp.swift */,
 				A20000000000000000000002 /* ContentView.swift */,
+				A20000000000000000000032 /* Assets.xcassets */,
 				A40000000000000000000005 /* Core */,
 				A40000000000000000000008 /* Runtime */,
 				A40000000000000000000006 /* Features */,
@@ -139,6 +154,7 @@
 				A20000000000000000000007 /* MicrophoneCaptureService.swift */,
 				A20000000000000000000018 /* WakeWordService.swift */,
 				A20000000000000000000021 /* ConversationAudioService.swift */,
+				A20000000000000000000033 /* VoiceProcessingAudioUnit.swift */,
 				A20000000000000000000024 /* ScreenRegionCaptureService.swift */,
 			);
 			path = Platform;
@@ -164,6 +180,8 @@
 				A20000000000000000000009 /* InputOverlay.swift */,
 				A20000000000000000000016 /* InputOverlayAtmosphere.swift */,
 				A20000000000000000000022 /* ConversationCoordinator.swift */,
+				A20000000000000000000040 /* ConversationCoordinatorDiagnostics.swift */,
+				A20000000000000000000041 /* ConversationCoordinatorEvents.swift */,
 				A20000000000000000000029 /* ConversationPresentation.swift */,
 				A20000000000000000000023 /* IslandWaveform.swift */,
 				A20000000000000000000025 /* ScreenRegionSelection.swift */,
@@ -194,8 +212,10 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000030 /* ConversationAudioLevels.swift */,
+				A20000000000000000000039 /* ConversationDiagnostics.swift */,
 				A20000000000000000000027 /* ConversationSessionLedger.swift */,
 				A20000000000000000000028 /* ConversationTurnCorrelator.swift */,
+				A20000000000000000000037 /* UserTurnTranscription.swift */,
 			);
 			path = Conversation;
 			sourceTree = "<group>";
@@ -204,6 +224,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000031 /* ConversationWorkBridge.swift */,
+				A20000000000000000000038 /* WorkDraft.swift */,
 			);
 			path = Work;
 			sourceTree = "<group>";
@@ -252,7 +273,8 @@
 		A70000000000000000000001 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
-				LastUpgradeCheck = 1600;
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					A50000000000000000000001 = {
 						CreatedOnToolsVersion = 16.0;
@@ -281,6 +303,25 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A30000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000029 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000014 /* DictationQualityCases.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A30000000000000000000002 /* Sources */ = {
@@ -312,6 +353,12 @@
 				A10000000000000000000026 /* ConversationPresentation.swift in Sources */,
 				A10000000000000000000027 /* ConversationAudioLevels.swift in Sources */,
 				A10000000000000000000028 /* ConversationWorkBridge.swift in Sources */,
+				A10000000000000000000030 /* VoiceProcessingAudioUnit.swift in Sources */,
+				A10000000000000000000034 /* UserTurnTranscription.swift in Sources */,
+				A10000000000000000000035 /* WorkDraft.swift in Sources */,
+				A10000000000000000000036 /* ConversationDiagnostics.swift in Sources */,
+				A10000000000000000000037 /* ConversationCoordinatorDiagnostics.swift in Sources */,
+				A10000000000000000000038 /* ConversationCoordinatorEvents.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -325,24 +372,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXResourcesBuildPhase section */
-		A30000000000000000000003 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		A30000000000000000000006 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A10000000000000000000014 /* DictationQualityCases.json in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
 		AA0000000000000000000001 /* PBXTargetDependency */ = {
@@ -361,10 +390,12 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 7WKP2RG3A9;
-				ENABLE_TESTABILITY = YES;
 				DEVELOPMENT_LANGUAGE = en;
+				DEVELOPMENT_TEAM = 7WKP2RG3A9;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Friday/Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
@@ -381,10 +412,12 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_IDENTITY = "Developer ID Application";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_LANGUAGE = en;
+				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Friday/Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
@@ -396,35 +429,96 @@
 			};
 			name = Release;
 		};
-		A80000000000000000000003 /* Project Debug */ = {
+		A80000000000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
 		};
-		A80000000000000000000004 /* Project Release */ = {
+		A80000000000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
 		};
-		A80000000000000000000005 /* FridayTests Debug */ = {
+		A80000000000000000000005 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 7WKP2RG3A9;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
@@ -435,13 +529,14 @@
 			};
 			name = Debug;
 		};
-		A80000000000000000000006 /* FridayTests Release */ = {
+		A80000000000000000000006 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 7WKP2RG3A9;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
@@ -458,8 +553,8 @@
 		A60000000000000000000001 /* Build configuration list for PBXProject "Friday" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A80000000000000000000003 /* Project Debug */,
-				A80000000000000000000004 /* Project Release */,
+				A80000000000000000000003 /* Debug */,
+				A80000000000000000000004 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -476,8 +571,8 @@
 		A60000000000000000000003 /* Build configuration list for PBXNativeTarget "FridayTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A80000000000000000000005 /* FridayTests Debug */,
-				A80000000000000000000006 /* FridayTests Release */,
+				A80000000000000000000005 /* Debug */,
+				A80000000000000000000006 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

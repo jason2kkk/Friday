@@ -57,6 +57,7 @@ optional provider contract and is not allowed to replace Dictate's
 - [Project structure](docs/项目结构.md): current repository tree, per-file responsibilities, source-header convention, and local-artifact boundaries.
 - [Programming agent guide](docs/编程Agent规范.md): mandatory source-header detail and project-structure synchronization workflow for coding agents.
 - [Issue and PR workflow](docs/Issue与PR工作流.md): issue sizing, branch naming, review evidence, merge rules, and agent authority boundaries.
+- [Engineering problem reviews](docs/工程问题与复盘.md): evidence-led investigations, root causes, fixes, validation, and reusable lessons from difficult engineering problems.
 - [Architecture overview](docs/架构概览.md): interview-friendly component and flow diagrams, core concepts, memory model, and major tradeoffs.
 - [Technical architecture](docs/技术架构.md): detailed Context/Conversation/Memory/Work/Permission contracts and incremental migration plan.
 - [Interaction architecture](docs/交互架构.md): responsibilities and flows for the persistent dynamic island, expanded dashboard, in-island confirmations, and background results.
@@ -68,26 +69,35 @@ optional provider contract and is not allowed to replace Dictate's
 ## Current scope
 
 - SwiftUI macOS app target
-- Persistent compact dynamic island that opens a Doit-inspired `620 x 360` control dashboard when clicked
-- All commands, permission recovery, transient notices, failures, results, usage diagnostics, refresh, and quit controls live in the expanded island; there is no separate menu-bar menu or main window
+- Persistent compact dynamic island that opens a `520 x 300` control dashboard and morphs in place to a narrower `400 x 480` settings menu
+- Commands, permission recovery, transient notices, failures, results, usage diagnostics, refresh, and quit controls live in the dashboard or its in-island settings page; there is no separate menu-bar menu or main window
 - No microphone capture, Speech recognition task, Realtime credential, or model session while Friday is idle
 - Separate modifier-only `Fn` Dictate and `Control + Option` voice Agent shortcuts
 - Talk-only `Control + Command` screen-region selection with a transparent overlay, pointer-adjacent drag guide, `Esc` cancellation, multi-display support, and no response until the user continues speaking
 - One in-memory, compressed user-selected image context per Talk session; selecting again removes the previous image from the Realtime conversation
 - Screen capture permission remains independent: denying it leaves Dictate and ordinary Talk available
 - Dormant on-device `Hey Friday` implementation behind a replaceable `WakeWordProviding` boundary for a future opt-in mode
-- Interruptible speech-to-speech Talk session using semantic VAD, automatic responses, PCM16 playback, and client-side WebSocket truncation
-- Standard full-duplex fallback suppresses speaker echo while Friday is talking and for a short playback tail, while retaining nearby user speech for intentional interruption
-- Talk starts and validates the local full-duplex audio engine before requesting a Realtime credential, so local device failures do not consume a new session
-- Each Talk rebuilds its audio engine; failed Voice Processing initialization falls back to standard full duplex, remembers the working path for faster later starts, and audio-route changes end the session without leaving the microphone active
+- Interruptible speech-to-speech Talk session using high-eagerness semantic VAD, client-owned response creation, PCM16 playback, and client-side WebSocket truncation
+- Realtime Talk tool routing for draft, explicit confirmation, discard, status, and cancellation is exposed only when final input transcription is configured; every tool result is returned to the same conversation
+- Session-scoped `WorkDraft` correlation: model intent and final input transcription must share one Friday TurnID, and a separate final transcript must explicitly say “确认提交” before formal Mock Work creation
+- In-memory Mock Work Runtime with idempotent submission, query, cancellation, bounded polling, and explicit `mock_read_only` results
+- Background Work remains independent from Talk: accepted work does not disconnect the conversation, completion waits while the user is speaking, and interrupted result delivery is queued again
+- Work objectives remain marked `model_derived`; final user transcripts are currently session-only verification data, and the real Talk ASR Provider remains disabled by default, so no real external executor is allowed
+- Native `VoiceProcessingIO` full-duplex audio uses the real playback stream as the macOS echo-cancellation reference and returns the processed microphone stream to Realtime
+- A local adaptive near-field gate requires sustained, dynamically changing speech-like audio before forwarding either a listening turn or an interruption, applies a stricter threshold while Friday is speaking, and preserves a short pre-roll
+- If `VoiceProcessingIO` cannot start, Talk falls back to safe half duplex and uploads no microphone audio during playback, so degraded audio support cannot make Friday interrupt itself
+- Talk starts and validates the local bidirectional audio path before requesting a Realtime credential, so local device failures do not consume a new session
 - Up to five seconds of opening speech are retained locally while the Realtime WebSocket connects
 - Talk dynamic island renders its kaomoji and waveform before the window becomes visible, without a blank opening frame or visible workflow labels
 - If the first Talk remains silent for about five seconds, Friday asks one short opening question; local speech cancels it before inference
 - `gpt-realtime-2.1` as the default for both modes: minimal reasoning and text output for Dictate, low reasoning and audio output for Talk
-- High-eagerness semantic VAD for faster turn completion without a fixed silence timer
+- Near-field noise reduction and high-eagerness semantic VAD detect the endpoint promptly; if raised room noise remains after speech, the local gate converts its stable tail into endpoint silence instead of uploading it indefinitely, and a 450 ms continuation grace still protects short sentence pauses
+- Server-side automatic interruption is disabled; the client cancels playback only after local sustained near-field confirmation and a matching Realtime speech event, so short impacts and steady background sound do not stop Friday
+- A silent `wait_for_user` tool remains available only for high-confidence silence, brief non-speech noise, or obvious playback residue; sustained or intelligible speech must receive an answer or a short clarification, and the client deterministically overrides a silent tool call after a provider-measured sustained user turn
 - No daily, cumulative-session, Talk-duration, response-count, or total-token development quota
-- Safety-only guards: 320 output tokens per Talk response, 20-second idle cleanup, credential-request burst protection, and client-side response-storm protection
+- Safety-only guards: 640 output tokens per Talk response, 20-second idle cleanup, credential-request burst protection, and a client-side response-storm guard that resets whenever a new user turn begins
 - Per-turn first-audio latency and modality-aware `gpt-realtime-2.1` cost diagnostics without recording conversation content
+- A privacy-safe latest-Talk trace at `~/Library/Application Support/Friday/Diagnostics/latest-talk.jsonl`; each new Talk replaces the previous trace and correlates activation, local input-gate candidates/confirmation/release, user speech, response, assistant item, playback, interruption, and tool resolution with per-stage latency fields, without audio, transcripts, screenshots, prompts, or credentials
 - `marin` as the default Talk voice, configurable on the session service
 - `Fn` global modifier gesture for starting and finishing Dictate
 - Expanded-island quit command with `Cmd+Q` support
@@ -121,13 +131,12 @@ optional provider contract and is not allowed to replace Dictate's
 
 ## Next implementation step
 
-Validate and extend the native input layer in this order:
+Move the bounded Agent path forward without weakening the existing Dictate and Talk flows:
 
-1. Run Friday from Xcode and grant Accessibility and microphone access.
-2. Verify shortcut feedback, cancellation, insertion, and system undo in TextEdit, Notes, and Safari.
-3. Verify compact island states ignore pointer input, while result copy/retry actions do not replace the locked input target.
-4. Start the local session service and validate one short Live request when OpenAI connectivity is available.
-5. Compare the spoken content, generated result, and inserted text before increasing Live usage.
+1. Choose and deliberately enable one final user-turn ASR Provider, then verify the WorkDraft restatement and “确认提交” flow in a bounded real Talk session.
+2. Replace the in-memory Work Store with the documented local SQLite store and add restart recovery.
+3. Add a task surface for inspecting and cancelling Work without exposing internal model or session details.
+4. Only then introduce the first structured `ActionProposal`, permission confirmation, and reversible local action.
 
 The OpenAI API key should stay on the backend, never inside the Mac app bundle.
 

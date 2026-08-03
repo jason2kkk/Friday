@@ -123,7 +123,8 @@ final class AppState: ObservableObject {
             presentation: InputOverlayConversationPresenter(
                 model: overlayModel,
                 controller: overlayController
-            )
+            ),
+            diagnostics: ConversationJSONLDiagnosticsRecorder()
         )
     }()
     private var activeProvider: DictationProvider?

@@ -24,10 +24,6 @@ enum GlobalHotKeyAction: Equatable {
     case dictation
     case conversation
     case screenRegion
-
-    var suppressesSystemReleaseEvent: Bool {
-        self == .dictation
-    }
 }
 
 struct ModifierChordRecognizer {
@@ -42,16 +38,36 @@ struct ModifierChordRecognizer {
     private var armedAction: GlobalHotKeyAction?
     private var pendingAction: GlobalHotKeyAction?
     private var isBlockedUntilRelease = false
+    private var isConsumingFunctionGesture = false
+    private(set) var suppressesCurrentFlagsEvent = false
+
+    var shouldConsumeFunctionKeyEvent: Bool {
+        isConsumingFunctionGesture
+    }
 
     mutating func handleFlagsChanged(
         _ flags: NSEvent.ModifierFlags
     ) -> GlobalHotKeyAction? {
         let current = flags.intersection(Self.relevantModifiers)
+        suppressesCurrentFlagsEvent = false
+
+        if current == [.function],
+           armedAction == nil,
+           pendingAction == nil,
+           !isBlockedUntilRelease {
+            isConsumingFunctionGesture = true
+        }
+        if isConsumingFunctionGesture,
+           current == [.function] || current.isEmpty {
+            suppressesCurrentFlagsEvent = true
+        }
+
         guard !current.isEmpty else {
             let action = isBlockedUntilRelease ? nil : (pendingAction ?? armedAction)
             armedAction = nil
             pendingAction = nil
             isBlockedUntilRelease = false
+            isConsumingFunctionGesture = false
             return action
         }
 
@@ -143,6 +159,7 @@ final class GlobalHotKeyService {
         guard eventTap == nil else { return }
         let eventMask = (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
             | (CGEventMask(1) << CGEventType.keyDown.rawValue)
+            | (CGEventMask(1) << CGEventType.keyUp.rawValue)
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -181,11 +198,22 @@ final class GlobalHotKeyService {
             return Unmanaged.passUnretained(event)
         }
         let action: GlobalHotKeyAction?
+        var suppressEvent = false
         switch type {
         case .flagsChanged:
             action = recognizer.handleFlagsChanged(nsEvent.modifierFlags)
+            suppressEvent = recognizer.suppressesCurrentFlagsEvent
         case .keyDown:
-            recognizer.handleKeyDown(modifierFlags: nsEvent.modifierFlags)
+            if event.getIntegerValueField(.keyboardEventKeycode) == 63,
+               recognizer.shouldConsumeFunctionKeyEvent {
+                suppressEvent = true
+            } else {
+                recognizer.handleKeyDown(modifierFlags: nsEvent.modifierFlags)
+            }
+            action = nil
+        case .keyUp:
+            suppressEvent = event.getIntegerValueField(.keyboardEventKeycode) == 63
+                && recognizer.shouldConsumeFunctionKeyEvent
             action = nil
         default:
             action = nil
@@ -196,11 +224,16 @@ final class GlobalHotKeyService {
             onPressed?(action)
         }
 
-        // macOS performs the configured Globe/Fn single-press action on release.
-        // Consume only the validated pure-Fn release; mixed shortcuts pass through.
-        return action?.suppressesSystemReleaseEvent == true
-            ? nil
-            : Unmanaged.passUnretained(event)
+        if suppressEvent || action == .dictation {
+            logger.info(
+                "Fn gesture event type=\(type.rawValue, privacy: .public) flags=\(nsEvent.modifierFlags.rawValue, privacy: .public) consumed=\(suppressEvent, privacy: .public) action=\(action == .dictation, privacy: .public)"
+            )
+        }
+
+        // macOS starts recognizing the configured Globe/Fn single-press action
+        // on press. Consume both boundaries of a pure-Fn candidate; events that
+        // include another modifier or regular key still pass through.
+        return suppressEvent ? nil : Unmanaged.passUnretained(event)
     }
 
     deinit {

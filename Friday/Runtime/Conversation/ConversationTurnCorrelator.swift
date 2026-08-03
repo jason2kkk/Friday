@@ -175,6 +175,18 @@ struct ConversationTurnCorrelator {
     }
 
     @discardableResult
+    mutating func cancelAwaitingResponse(
+        for turnID: ConversationTurnID
+    ) -> ConversationTurnCorrelationSnapshot? {
+        guard var turn = turns[turnID],
+              turn.responseState == .awaitingResponse else { return nil }
+        turn = replacing(turn, responseState: .cancelled)
+        store(turn)
+        awaitingResponseTurnIDs.removeAll { $0 == turnID }
+        return turn
+    }
+
+    @discardableResult
     mutating func beginResponse(
         providerResponseID: ConversationProviderResponseID?
     ) -> ConversationTurnCorrelationSnapshot? {
@@ -290,6 +302,12 @@ struct ConversationTurnCorrelator {
         for providerResponseID: ConversationProviderResponseID
     ) -> ConversationTurnCorrelationSnapshot? {
         turnByProviderResponseID[providerResponseID].flatMap { turns[$0] }
+    }
+
+    func snapshot(
+        for providerUserItemID: ConversationProviderItemID
+    ) -> ConversationTurnCorrelationSnapshot? {
+        turnByProviderUserItemID[providerUserItemID].flatMap { turns[$0] }
     }
 
     func snapshot(

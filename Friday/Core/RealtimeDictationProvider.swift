@@ -493,10 +493,10 @@ enum RealtimeConfiguration {
         return URL(string: configuredValue)
     }
 
-    static var healthEndpoint: URL? {
+    static var readinessEndpoint: URL? {
         guard let credentialEndpoint else { return nil }
         var components = URLComponents(url: credentialEndpoint, resolvingAgainstBaseURL: false)
-        components?.path = "/health"
+        components?.path = "/ready"
         components?.query = nil
         components?.fragment = nil
         return components?.url

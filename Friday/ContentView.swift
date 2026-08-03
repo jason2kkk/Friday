@@ -1,8 +1,7 @@
-// 功能：展示 Friday 灵动岛的展开仪表盘，让用户查看状态并执行所有常用操作。
-// 职责：根据 InputOverlayModel 呈现服务、模型、权限、用量、最近结果和提示信息，并转发刷新、授权、复制、重试与退出命令。
+// 功能：展示 Friday 灵动岛的主页与设置形态，让用户查看状态并执行所有常用操作。
+// 职责：根据 InputOverlayModel 呈现快捷操作、服务、权限、用量、最近结果和纵向设置菜单，并转发页面切换与业务命令。
 // 边界：视图只负责展示和事件转发，不直接读取系统权限、访问网络、管理凭证或控制音频设备。
 
-import AppKit
 import SwiftUI
 
 struct IslandDashboardSnapshot: Equatable {
@@ -51,38 +50,58 @@ struct IslandDashboardSnapshot: Equatable {
     )
 }
 
+private extension View {
+    func solidModule(cornerRadius: CGFloat = 20) -> some View {
+        background {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(Color(red: 0.027, green: 0.027, blue: 0.027))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(.white.opacity(0.2), lineWidth: 1)
+        }
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var model: InputOverlayModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        ZStack(alignment: .top) {
+            switch model.expandedPage {
+            case .dashboard:
+                dashboardPage
+                    .transition(.opacity)
+            case .settings:
+                settingsPage
+                    .transition(.opacity)
+            }
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(.easeInOut(duration: 0.16), value: model.expandedPage)
+    }
 
-            Divider()
-                .overlay(.white.opacity(0.1))
+    private var dashboardPage: some View {
+        VStack(spacing: 0) {
+            dashboardHeader
+            sectionDivider
 
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 14) {
+                VStack(spacing: 10) {
                     presentedMessage
                     quickActions
                     usageMonitor
                     attentionRows
                     recentResult
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
             }
-
-            Divider()
-                .overlay(.white.opacity(0.1))
-
-            footer
         }
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var header: some View {
+    private var dashboardHeader: some View {
         HStack(spacing: 11) {
             Circle()
                 .fill(statusColor)
@@ -100,21 +119,130 @@ struct ContentView: View {
 
             Spacer(minLength: 12)
 
-            Button {
-                model.onCollapseDashboard?()
-            } label: {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 11, weight: .bold))
-                    .frame(width: 28, height: 28)
-                    .background(.white.opacity(0.08))
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help("收起")
-            .accessibilityLabel("收起 Friday")
+            headerButton(
+                assetName: "设置图标",
+                rendersOriginal: true,
+                help: "设置",
+                accessibilityLabel: "打开 Friday 设置",
+                action: { model.onPresentSettings?() }
+            )
         }
-        .padding(.horizontal, 24)
-        .frame(height: 58)
+        .padding(.horizontal, 20)
+        .frame(height: 56)
+    }
+
+    private var settingsPage: some View {
+        VStack(spacing: 0) {
+            settingsHeader
+            sectionDivider
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 18) {
+                    settingsSection("权限") {
+                        permissionRow(
+                            title: "辅助功能",
+                            detail: "写回当前输入框",
+                            icon: "鼠标图标",
+                            isGranted: model.dashboard.accessibilityGranted,
+                            actionTitle: "去设置",
+                            action: { model.onRequestAccessibility?() }
+                        )
+                        permissionRow(
+                            title: "麦克风",
+                            detail: "转写与语音对话",
+                            icon: "麦克风图标",
+                            isGranted: model.dashboard.microphoneGranted,
+                            actionTitle: model.dashboard.microphoneCanRequest ? "允许" : "去设置",
+                            action: { model.onRequestMicrophone?() }
+                        )
+                        permissionRow(
+                            title: "屏幕录制",
+                            detail: "仅用于主动框选",
+                            icon: "框选图标",
+                            isGranted: model.dashboard.screenCaptureGranted,
+                            actionTitle: "去设置",
+                            showsDivider: false,
+                            action: { model.onRequestScreenCapture?() }
+                        )
+                    }
+
+                    settingsSection("服务与用量") {
+                        informationRow(
+                            title: "本地语音服务",
+                            detail: model.dashboard.serviceLabel,
+                            icon: "云连接图标",
+                            trailing: model.dashboard.serviceAvailable ? "可用" : "需检查",
+                            trailingColor: model.dashboard.serviceAvailable ? .green : .orange
+                        )
+                        informationRow(
+                            title: "当前模型",
+                            detail: model.dashboard.model,
+                            icon: "处理器图标",
+                            trailing: nil
+                        )
+                        informationRow(
+                            title: "Talk 用量",
+                            detail: "\(model.dashboard.talkResponses) 次回复 · \(formattedCount(model.dashboard.talkTokens)) token · \(formattedCost(model.dashboard.talkEstimatedCostUSD))",
+                            icon: "语音图标",
+                            trailing: nil
+                        )
+                        informationRow(
+                            title: "账户额度",
+                            detail: model.dashboard.quotaLabel,
+                            icon: "额度图标",
+                            trailing: nil,
+                            showsDivider: false
+                        )
+                    }
+
+                    settingsSection("通用") {
+                        commandRow(
+                            title: "刷新状态",
+                            detail: "重新检查权限、服务与模型",
+                            icon: "刷新图标",
+                            showsDivider: model.dashboard.lastOutput?.isEmpty == false,
+                            action: { model.onRefresh?() }
+                        )
+                        if let output = model.dashboard.lastOutput, !output.isEmpty {
+                            commandRow(
+                                title: "清除最近结果",
+                                detail: "移除当前保留的转写结果",
+                                icon: "删除图标",
+                                showsDivider: false,
+                                action: { model.onClearLastOutput?() }
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 16)
+            }
+        }
+    }
+
+    private var settingsHeader: some View {
+        HStack(spacing: 10) {
+            headerButton(
+                assetName: "返回图标",
+                help: "返回",
+                accessibilityLabel: "返回 Friday 主页",
+                action: { model.onPresentDashboard?() }
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("设置")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("Friday")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+
+            Spacer(minLength: 12)
+
+            quitHeaderButton
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 56)
     }
 
     @ViewBuilder
@@ -123,21 +251,21 @@ struct ContentView: View {
         case .failure(let message, let canRetry):
             messageBand(
                 message: message,
-                systemImage: "exclamationmark.triangle.fill",
+                icon: "警告图标",
                 tint: .orange,
                 canRetry: canRetry
             )
         case .notice(let message):
             messageBand(
                 message: message,
-                systemImage: "checkmark.circle.fill",
+                icon: "完成图标",
                 tint: .green,
                 canRetry: false
             )
         case .result(let text, let message, let canRetry):
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    Image(systemName: "text.badge.checkmark")
+                    appIcon("文档图标")
                         .foregroundStyle(.cyan)
                     Text(message)
                         .font(.system(size: 12, weight: .semibold))
@@ -156,21 +284,20 @@ struct ContentView: View {
                     if canRetry {
                         compactCommand(
                             title: "重试写入",
-                            systemImage: "arrow.clockwise",
+                            icon: "刷新图标",
                             action: { model.onRetry?() }
                         )
                     }
                     compactCommand(
                         title: "复制",
-                        systemImage: "doc.on.doc",
+                        icon: "复制图标",
                         emphasized: true,
                         action: { model.onCopy?() }
                     )
                 }
             }
             .padding(12)
-            .background(.white.opacity(0.07))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .solidModule()
         default:
             EmptyView()
         }
@@ -180,30 +307,37 @@ struct ContentView: View {
         HStack(spacing: 8) {
             actionButton(
                 title: model.dashboard.isDictationActive ? "结束转写" : "转写",
-                systemImage: model.dashboard.isDictationActive ? "stop.fill" : "text.cursor",
+                icon: model.dashboard.isDictationActive ? "停止图标" : "文字图标",
                 tint: .cyan,
                 action: { model.onToggleDictation?() }
             )
             actionButton(
                 title: model.dashboard.isConversationActive ? "结束对话" : "语音 Agent",
-                systemImage: model.dashboard.isConversationActive ? "stop.fill" : "waveform",
+                icon: model.dashboard.isConversationActive ? "停止图标" : "语音图标",
                 tint: .pink,
                 action: { model.onToggleConversation?() }
             )
             actionButton(
                 title: "框选屏幕",
-                systemImage: "viewfinder",
+                icon: "框选图标",
                 tint: .purple,
                 action: { model.onSelectScreenRegion?() }
             )
         }
+        .padding(12)
+        .solidModule()
     }
 
     private var usageMonitor: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             HStack {
-                Label("用量监控", systemImage: "gauge.with.dots.needle.50percent")
-                    .font(.system(size: 12, weight: .semibold))
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(model.dashboard.serviceAvailable ? Color.green : Color.orange)
+                        .frame(width: 6, height: 6)
+                    Text(model.dashboard.serviceLabel)
+                        .font(.system(size: 11, weight: .medium))
+                }
                 Spacer()
                 Text(model.dashboard.model)
                     .font(.system(size: 10, design: .monospaced))
@@ -231,23 +365,18 @@ struct ContentView: View {
             }
 
             HStack(spacing: 8) {
-                Circle()
-                    .fill(model.dashboard.serviceAvailable ? Color.green : Color.orange)
-                    .frame(width: 6, height: 6)
-                Text(model.dashboard.serviceLabel)
-                Spacer()
                 Text(model.dashboard.quotaLabel)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                Spacer(minLength: 8)
+                Text("转写 \(formattedCount(model.dashboard.dictationTokens)) token")
+                    .lineLimit(1)
             }
             .font(.system(size: 10))
             .foregroundStyle(.white.opacity(0.48))
         }
         .padding(12)
-        .background(.white.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(.white.opacity(0.1), lineWidth: 1)
-        }
+        .solidModule()
     }
 
     @ViewBuilder
@@ -262,7 +391,7 @@ struct ContentView: View {
                 if !dashboard.accessibilityGranted {
                     attentionRow(
                         title: "允许自动写入",
-                        systemImage: "hand.point.up.left.fill",
+                        icon: "编辑图标",
                         actionTitle: "授权",
                         action: { model.onRequestAccessibility?() }
                     )
@@ -270,7 +399,7 @@ struct ContentView: View {
                 if !dashboard.microphoneGranted {
                     attentionRow(
                         title: "允许使用麦克风",
-                        systemImage: "mic.slash.fill",
+                        icon: "麦克风关闭图标",
                         actionTitle: dashboard.microphoneCanRequest ? "允许" : "设置",
                         action: { model.onRequestMicrophone?() }
                     )
@@ -278,7 +407,7 @@ struct ContentView: View {
                 if !dashboard.screenCaptureGranted {
                     attentionRow(
                         title: "允许屏幕框选",
-                        systemImage: "rectangle.dashed.badge.record",
+                        icon: "框选图标",
                         actionTitle: "授权",
                         action: { model.onRequestScreenCapture?() }
                     )
@@ -286,7 +415,7 @@ struct ContentView: View {
                 if dashboard.serviceNeedsAttention {
                     attentionRow(
                         title: "语音服务需要检查",
-                        systemImage: "network.slash",
+                        icon: "网络图标",
                         actionTitle: "重试",
                         action: { model.onRefresh?() }
                     )
@@ -294,12 +423,15 @@ struct ContentView: View {
                 if dashboard.canRetry {
                     attentionRow(
                         title: "本轮内容已保留",
-                        systemImage: "arrow.uturn.backward.circle",
+                        icon: "刷新图标",
                         actionTitle: "重试",
                         action: { model.onRetry?() }
                     )
                 }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .solidModule()
         }
     }
 
@@ -309,7 +441,7 @@ struct ContentView: View {
             EmptyView()
         } else if let output = model.dashboard.lastOutput, !output.isEmpty {
             HStack(spacing: 10) {
-                Image(systemName: "text.badge.checkmark")
+                appIcon("文档图标")
                     .foregroundStyle(.cyan)
                 Text(output)
                     .font(.system(size: 12))
@@ -318,57 +450,31 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button(action: { model.onCopy?() }) {
-                    Image(systemName: "doc.on.doc")
+                    appIcon("复制图标")
                 }
                 .buttonStyle(.plain)
                 .help("复制最近结果")
 
                 Button(action: { model.onClearLastOutput?() }) {
-                    Image(systemName: "trash")
+                    appIcon("删除图标")
                 }
                 .buttonStyle(.plain)
                 .help("清除最近结果")
             }
+            .padding(12)
+            .solidModule()
         }
-    }
-
-    private var footer: some View {
-        HStack(spacing: 12) {
-            Text("最近转写 \(formattedCount(model.dashboard.dictationTokens)) token")
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.38))
-
-            Spacer()
-
-            Button(action: { model.onRefresh?() }) {
-                Image(systemName: "arrow.clockwise")
-            }
-            .buttonStyle(.plain)
-            .help("刷新状态")
-            .accessibilityLabel("刷新状态")
-
-            Button(action: { model.onQuit?() }) {
-                Image(systemName: "power")
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut("q")
-            .help("退出 Friday")
-            .accessibilityLabel("退出 Friday")
-        }
-        .padding(.horizontal, 24)
-        .frame(height: 38)
     }
 
     private func actionButton(
         title: String,
-        systemImage: String,
+        icon: String,
         tint: Color,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 7) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 12, weight: .semibold))
+                appIcon(icon)
                     .foregroundStyle(tint)
                 Text(title)
                     .font(.system(size: 12, weight: .semibold))
@@ -376,12 +482,7 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity)
             .frame(height: 36)
-            .background(.white.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(.white.opacity(0.1), lineWidth: 1)
-            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -403,12 +504,12 @@ struct ContentView: View {
 
     private func attentionRow(
         title: String,
-        systemImage: String,
+        icon: String,
         actionTitle: String,
         action: @escaping () -> Void
     ) -> some View {
         HStack(spacing: 9) {
-            Image(systemName: systemImage)
+            appIcon(icon)
                 .foregroundStyle(.orange)
                 .frame(width: 18)
             Text(title)
@@ -424,12 +525,12 @@ struct ContentView: View {
 
     private func messageBand(
         message: String,
-        systemImage: String,
+        icon: String,
         tint: Color,
         canRetry: Bool
     ) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: systemImage)
+            appIcon(icon)
                 .foregroundStyle(tint)
             Text(message)
                 .font(.system(size: 12, weight: .medium))
@@ -437,7 +538,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             if canRetry {
                 Button(action: { model.onRetry?() }) {
-                    Image(systemName: "arrow.clockwise")
+                    appIcon("刷新图标")
                 }
                 .buttonStyle(.plain)
                 .help("重试")
@@ -445,26 +546,226 @@ struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 38)
-        .background(tint.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .solidModule()
     }
 
     private func compactCommand(
         title: String,
-        systemImage: String,
+        icon: String,
         emphasized: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(emphasized ? Color.black : Color.white.opacity(0.84))
-                .padding(.horizontal, 10)
-                .frame(height: 28)
-                .background(emphasized ? Color.white : Color.white.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            HStack(spacing: 5) {
+                appIcon(icon)
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(emphasized ? Color.black : Color.white.opacity(0.84))
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(emphasized ? Color.white : Color.white.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+
+    private func headerButton(
+        assetName: String,
+        rendersOriginal: Bool = false,
+        help: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(assetName)
+                .renderingMode(rendersOriginal ? .original : .template)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 16, height: 16)
+                .frame(width: 28, height: 28)
+                .background(.white.opacity(0.08))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var quitHeaderButton: some View {
+        Button(action: { model.onQuit?() }) {
+            HStack(spacing: 6) {
+                Image("退出图标")
+                    .renderingMode(.original)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 16, height: 16)
+                Text("退出")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.82))
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(.white.opacity(0.08))
+            .clipShape(Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("q")
+        .help("退出 Friday")
+        .accessibilityLabel("退出 Friday")
+    }
+
+    private func settingsSection<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.38))
+                .padding(.leading, 4)
+
+            VStack(spacing: 0) {
+                content()
+            }
+            .solidModule()
+        }
+    }
+
+    private func permissionRow(
+        title: String,
+        detail: String,
+        icon: String,
+        isGranted: Bool,
+        actionTitle: String,
+        showsDivider: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                settingsIcon(icon, color: isGranted ? .green : .orange)
+                settingsLabels(title: title, detail: detail)
+                Spacer(minLength: 10)
+
+                if isGranted {
+                    HStack(spacing: 4) {
+                        appIcon("完成图标")
+                        Text("已开启")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundStyle(.green)
+                } else {
+                    Text(actionTitle)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.6))
+                    appIcon("右箭头图标")
+                        .foregroundStyle(.white.opacity(0.3))
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 48)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                if showsDivider { settingsRowDivider }
+            }
+        }
+        .buttonStyle(.plain)
+        .allowsHitTesting(!isGranted)
+    }
+
+    private func informationRow(
+        title: String,
+        detail: String,
+        icon: String,
+        trailing: String?,
+        trailingColor: Color = .white.opacity(0.5),
+        showsDivider: Bool = true
+    ) -> some View {
+        HStack(spacing: 11) {
+            settingsIcon(icon, color: .white.opacity(0.72))
+            settingsLabels(title: title, detail: detail)
+            Spacer(minLength: 10)
+            if let trailing {
+                Text(trailing)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(trailingColor)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 48)
+        .overlay(alignment: .bottom) {
+            if showsDivider { settingsRowDivider }
+        }
+    }
+
+    private func commandRow(
+        title: String,
+        detail: String,
+        icon: String,
+        showsDivider: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                settingsIcon(icon, color: .white.opacity(0.7))
+                settingsLabels(title: title, detail: detail)
+                Spacer(minLength: 10)
+                appIcon("右箭头图标")
+                    .foregroundStyle(.white.opacity(0.3))
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 48)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                if showsDivider { settingsRowDivider }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func settingsIcon(_ icon: String, color: Color) -> some View {
+        appIcon(icon)
+            .foregroundStyle(color)
+            .frame(width: 20)
+    }
+
+    private func appIcon(_ assetName: String, size: CGFloat = 16) -> some View {
+        Image(assetName)
+            .renderingMode(.template)
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size, height: size)
+    }
+
+    private func settingsLabels(title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+            Text(detail)
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.4))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+    }
+
+    private var settingsRowDivider: some View {
+        Rectangle()
+            .fill(.white.opacity(0.08))
+            .frame(height: 1)
+            .padding(.leading, 45)
+            .padding(.trailing, 14)
+    }
+
+    private var sectionDivider: some View {
+        Divider()
+            .overlay(.white.opacity(0.1))
     }
 
     private var statusColor: Color {
@@ -490,7 +791,10 @@ struct ContentView_Previews: PreviewProvider {
         model.dashboard = .preview
         model.isDashboardExpanded = true
         return ContentView(model: model)
-            .frame(width: 620, height: 360)
+            .frame(
+                width: InputOverlaySizing.expandedSize.width,
+                height: InputOverlaySizing.expandedSize.height
+            )
             .background(.black)
     }
 }

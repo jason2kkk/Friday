@@ -1,5 +1,5 @@
 // 功能：为开发者提供 Friday 本地 Realtime 凭证服务的统一管理命令。
-// 职责：编排钥匙串配置与读取、模型元数据诊断、普通或代理模式启动、健康状态查询和凭证删除。
+// 职责：编排钥匙串配置与读取、模型元数据诊断、普通或代理模式启动、分层状态查询和凭证删除。
 // 边界：默认不接受 Shell 中的长期 Key 覆盖；诊断只检查模型元数据，不签发短期凭证或触发模型回复。
 
 import { execFile, spawn } from "node:child_process";
@@ -18,6 +18,7 @@ const keychainAccount = process.env.FRIDAY_KEYCHAIN_ACCOUNT
   || userInfo().username;
 const servicePort = Number.parseInt(process.env.FRIDAY_SESSION_PORT || "8787", 10);
 const healthURL = `http://127.0.0.1:${servicePort}/health`;
+const readinessURL = `http://127.0.0.1:${servicePort}/ready`;
 const command = process.argv[2] || "start";
 
 class OpenAIResponseError extends Error {
@@ -92,7 +93,8 @@ async function configureKeychain(useGUI) {
 async function startService(useProxy) {
   const existing = await fetchHealth().catch(() => null);
   if (existing?.status === "ok") {
-    console.log(`Friday session service is already ready on ${healthURL}.`);
+    console.log(`Friday session service is already listening on ${healthURL}.`);
+    console.log("Run npm run status to check OpenAI model readiness separately.");
     return;
   }
 
@@ -120,16 +122,23 @@ async function runDoctor(useEnvironmentKey) {
   console.log(`Node: ${process.version}`);
   console.log(`Key source: ${keySource}`);
   console.log(`Health endpoint: ${healthURL}`);
+  console.log(`Readiness endpoint: ${readinessURL}`);
 
   const localHealth = await fetchHealth().catch(() => null);
   if (localHealth?.status === "ok") {
+    console.log("Local service: listening");
+    const readiness = await fetchReadiness().catch((error) => {
+      throw new Error(
+        `Local service is listening, but OpenAI models are not ready: ${publicMessage(error)}`
+      );
+    });
     console.log(
-      `Local service: ready (Dictate: ${localHealth.model}; `
-        + `Talk: ${localHealth.talk_model || "not reported"})`
+      `OpenAI: ready (Dictate: ${readiness.model}; `
+        + `Talk: ${readiness.talk_model || "not reported"})`
     );
-    console.log(`Local sessions issued: ${localHealth.sessions_issued ?? "not reported"}`);
+    console.log(`Local sessions issued: ${readiness.sessions_issued ?? "not reported"}`);
     console.log(
-      `Account balance: ${localHealth.account_balance_readable
+      `Account balance: ${readiness.account_balance_readable
         ? "reported by provider"
         : "not readable with the configured Project API key"}`
     );
@@ -144,7 +153,23 @@ async function runDoctor(useEnvironmentKey) {
 
 async function printStatus() {
   const health = await fetchHealth();
-  console.log(JSON.stringify(health, null, 2));
+  console.log("Local service: listening");
+  try {
+    const readiness = await fetchReadiness();
+    console.log(
+      `OpenAI models: ready (Dictate: ${readiness.model}; `
+        + `Talk: ${readiness.talk_model || "not reported"})`
+    );
+    console.log(JSON.stringify({ local: health, readiness }, null, 2));
+  } catch (error) {
+    const message = publicMessage(error);
+    console.log(`OpenAI models: unavailable (${message})`);
+    console.log(JSON.stringify({
+      local: health,
+      readiness: { status: "unavailable", error: message }
+    }, null, 2));
+    process.exitCode = 1;
+  }
 }
 
 async function forgetKey() {
@@ -225,9 +250,17 @@ async function deleteKeychainItem() {
 }
 
 async function fetchHealth() {
-  const response = await fetch(healthURL, {
+  return fetchServiceStatus(healthURL, 1_500);
+}
+
+async function fetchReadiness() {
+  return fetchServiceStatus(readinessURL, 4_500);
+}
+
+async function fetchServiceStatus(url, timeoutMilliseconds) {
+  const response = await fetch(url, {
     headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(3_000)
+    signal: AbortSignal.timeout(timeoutMilliseconds)
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || payload.status !== "ok") {
