@@ -1,5 +1,5 @@
 // 功能：验证 Talk 会话身份、展示映射、音频打断和区域框选等高风险交互边界。
-// 职责：覆盖会话账本、响应循环保护、迟到事件隔离、回声尾音、屏幕指引布局和图片上下文 ID 等纯逻辑。
+// 职责：覆盖会话账本、端点静音交接、响应循环保护、迟到事件隔离、回声尾音、屏幕指引布局和图片上下文 ID 等纯逻辑。
 // 边界：不启动真实音频设备，不请求屏幕权限，不连接 Realtime 服务，也不产生付费模型响应。
 
 import XCTest
@@ -100,6 +100,82 @@ final class TalkInteractionTests: XCTestCase {
             gate.takeTransitions().contains {
                 $0 == .speechReleased(reason: .stableBackground)
             }
+        )
+    }
+
+    func testInputGateContinuesBoundedSilenceAfterLocalSpeechRelease() {
+        var gate = ConversationInputGate()
+        let openingSpeech: [Float] = [0.31, 0.46, 0.34, 0.52, 0.37]
+        _ = openingSpeech.flatMap {
+            gate.inputForRealtime(audioChunk(level: $0))
+        }
+        _ = gate.takeTransitions()
+
+        for _ in 0..<11 {
+            _ = gate.inputForRealtime(audioChunk(level: 0.05))
+        }
+        XCTAssertTrue(
+            gate.takeTransitions().contains {
+                $0 == .speechReleased(reason: .acousticSilence)
+            }
+        )
+
+        let endpointSilence = gate.inputForRealtime(audioChunk(level: 0.05))
+
+        XCTAssertEqual(endpointSilence.count, 1)
+        XCTAssertEqual(endpointSilence.first?.normalizedLevel, 0)
+        XCTAssertEqual(
+            endpointSilence.first?.pcm16,
+            Data(repeating: 0, count: 2_400)
+        )
+    }
+
+    func testInputGateEndpointSilenceIsBoundedAndReportsExhaustion() {
+        var gate = ConversationInputGate()
+        let openingSpeech: [Float] = [0.31, 0.46, 0.34, 0.52, 0.37]
+        _ = openingSpeech.flatMap {
+            gate.inputForRealtime(audioChunk(level: $0))
+        }
+        for _ in 0..<11 {
+            _ = gate.inputForRealtime(audioChunk(level: 0.05))
+        }
+        _ = gate.takeTransitions()
+
+        var forwardedEndpointChunks = 0
+        for _ in 0..<100 {
+            forwardedEndpointChunks += gate.inputForRealtime(
+                audioChunk(level: 0.05)
+            ).count
+        }
+
+        XCTAssertEqual(forwardedEndpointChunks, 80)
+        XCTAssertTrue(
+            gate.takeTransitions().contains(.endpointSilenceExhausted)
+        )
+        XCTAssertTrue(gate.inputForRealtime(audioChunk(level: 0.05)).isEmpty)
+    }
+
+    func testInputGateResumedSpeechCancelsEndpointSilenceAndPreservesPreRoll() {
+        var gate = ConversationInputGate()
+        let openingSpeech: [Float] = [0.31, 0.46, 0.34, 0.52, 0.37]
+        _ = openingSpeech.flatMap {
+            gate.inputForRealtime(audioChunk(level: $0))
+        }
+        for _ in 0..<11 {
+            _ = gate.inputForRealtime(audioChunk(level: 0.05))
+        }
+        _ = gate.takeTransitions()
+
+        let resumedSpeech: [Float] = [0.32, 0.48, 0.35, 0.53]
+        let resumedOutput = resumedSpeech.flatMap {
+            gate.inputForRealtime(audioChunk(level: $0))
+        }
+
+        XCTAssertGreaterThan(resumedOutput.count, 1)
+        XCTAssertTrue(resumedOutput.contains { $0.normalizedLevel > 0 })
+        XCTAssertTrue(gate.hasConfirmedSpeech)
+        XCTAssertFalse(
+            gate.takeTransitions().contains(.endpointSilenceExhausted)
         )
     }
 
@@ -260,6 +336,29 @@ final class TalkInteractionTests: XCTestCase {
         XCTAssertEqual(provider.userResponseRequestCount, 1)
         XCTAssertEqual(coordinator.state, .assistantPreparing)
         coordinator.stop()
+    }
+
+    func testEndpointSilenceExhaustionStopsAStuckUserTurn() async throws {
+        let provider = MockConversationProvider()
+        let audioService = WorkTestAudioService()
+        let coordinator = makeConversationCoordinator(
+            provider: provider,
+            audioService: audioService,
+            responseGrace: .milliseconds(20)
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.isConnected }
+        let itemID = try XCTUnwrap(
+            ConversationProviderItemID("user_without_provider_endpoint")
+        )
+        provider.simulate(.userSpeechStarted(itemID: itemID))
+
+        audioService.onInputGateTransition?(.endpointSilenceExhausted)
+
+        XCTAssertEqual(coordinator.state, .ending)
+        XCTAssertFalse(provider.isConnected)
+        XCTAssertFalse(coordinator.isProviderConnected)
     }
 
     func testSpeechResumeWithinGraceDoesNotCreateAnEarlyResponse() async throws {

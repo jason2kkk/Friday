@@ -1,5 +1,5 @@
 // 功能：编排 Talk 从快捷键或可选唤醒入口到双向语音交流、图片上下文、诊断和结束清理的完整用户流程。
-// 职责：协调可替换 Talk Runtime、Presentation 与屏幕上下文，管理连接缓冲、轮次身份、插话截断、响应风暴保护、无内容诊断和错误恢复。
+// 职责：协调可替换 Talk Runtime、Presentation 与屏幕上下文，管理连接缓冲、轮次身份、端点超时、插话截断、响应风暴保护、无内容诊断和错误恢复。
 // 边界：不直接实现 WebSocket、AVAudioEngine、屏幕截图或窗口绘制，也不持有长期 API Key，不把用户音频或对话文本写入诊断。
 
 import Foundation
@@ -382,7 +382,27 @@ final class ConversationCoordinator: ObservableObject {
             case .speechReleased(let reason):
                 recordDiagnostic(
                     "input_gate.speech_released",
-                    attributes: ["reason": reason.rawValue]
+                    attributes: [
+                        "reason": reason.rawValue,
+                        "endpoint_silence_limit_ms": String(
+                            ConversationInputGate.maximumEndpointSilenceMilliseconds
+                        )
+                    ]
+                )
+            case .endpointSilenceExhausted:
+                recordDiagnostic(
+                    "input_gate.endpoint_silence_exhausted",
+                    attributes: [
+                        "endpoint_silence_limit_ms": String(
+                            ConversationInputGate.maximumEndpointSilenceMilliseconds
+                        )
+                    ]
+                )
+                guard state == .listening || state == .userSpeaking else { return }
+                finishConversation(
+                    reason: .providerFailure,
+                    showToast: "这次语音没有正常结束，请再试一次",
+                    resumeWakeWord: true
                 )
             }
         }

@@ -1,5 +1,5 @@
 // 功能：为 Talk 同时采集用户麦克风并播放 Friday 的流式语音，提供可插话且不会自我打断的音频通道。
-// 职责：优先编排 VoiceProcessingIO 全双工 AEC，失败时使用 AVAudioEngine 半双工降级，并管理近场输入门、PCM 转换、播放完成和双向音量。
+// 职责：优先编排 VoiceProcessingIO 全双工 AEC，失败时使用 AVAudioEngine 半双工降级，并管理近场输入门、Realtime 端点静音交接、PCM 转换、播放完成和双向音量。
 // 边界：不建立网络会话、不理解语音内容、不保存原始音频；设备失败只通过类型化错误和回调交给协调器处理。
 
 @preconcurrency import AVFoundation
@@ -76,6 +76,7 @@ enum ConversationInputGateTransition: Equatable {
     case candidateStarted(interruption: Bool)
     case speechConfirmed(interruption: Bool)
     case speechReleased(reason: ConversationInputGateReleaseReason)
+    case endpointSilenceExhausted
 }
 
 struct ConversationInputGate {
@@ -98,6 +99,7 @@ struct ConversationInputGate {
     private var activeTailMovement: Float = 0
     private var previousActiveTailLevel: Float?
     private var isMutingStableTail = false
+    private var endpointSilenceFramesRemaining = 0
     private var preRoll: [AudioChunk] = []
     private var preRollFrameCount = 0
     private var pendingTransitions: [ConversationInputGateTransition] = []
@@ -110,7 +112,11 @@ struct ConversationInputGate {
     private static let trailingSilenceFrames = Int(Double(sampleRate) * 0.55)
     private static let stableTailAnalysisFrames = Int(Double(sampleRate) * 0.45)
     private static let stableTailEndpointFrames = Int(Double(sampleRate) * 0.40)
+    private static let maximumEndpointSilenceFrames = sampleRate * 4
     private static let resumedSpeechMovement: Float = 0.045
+
+    static let maximumEndpointSilenceMilliseconds = maximumEndpointSilenceFrames * 1_000
+        / sampleRate
 
     var hasConfirmedInterruption: Bool {
         isAssistantPlaying && hasConfirmedSpeech
@@ -130,6 +136,7 @@ struct ConversationInputGate {
         trailingSilenceFrames = 0
         resetCandidateProfile()
         resetActiveTailProfile()
+        endpointSilenceFramesRemaining = 0
         preRoll.removeAll(keepingCapacity: true)
         preRollFrameCount = 0
     }
@@ -140,6 +147,7 @@ struct ConversationInputGate {
             trailingSilenceFrames = 0
             resetCandidateProfile()
             resetActiveTailProfile()
+            endpointSilenceFramesRemaining = 0
             preRoll.removeAll(keepingCapacity: true)
             preRollFrameCount = 0
             return []
@@ -231,7 +239,7 @@ struct ConversationInputGate {
                     candidateVoiceFrames = 0
                     resetCandidateProfile()
                 }
-                return []
+                return endpointSilenceOutput(for: chunk)
             }
         } else {
             guard candidateVoiceFrames >= Self.listeningCandidateFrames,
@@ -240,10 +248,11 @@ struct ConversationInputGate {
                     candidateVoiceFrames = 0
                     resetCandidateProfile()
                 }
-                return []
+                return endpointSilenceOutput(for: chunk)
             }
         }
 
+        endpointSilenceFramesRemaining = 0
         speechIsActive = true
         hasConfirmedSpeech = true
         trailingSilenceFrames = 0
@@ -261,6 +270,7 @@ struct ConversationInputGate {
         isAssistantPlaying = false
         allowsInterruption = true
         hasConfirmedSpeech = false
+        endpointSilenceFramesRemaining = 0
         if !preserveActiveSpeech {
             speechIsActive = false
             candidateVoiceFrames = 0
@@ -350,7 +360,21 @@ struct ConversationInputGate {
         trailingSilenceFrames = 0
         resetCandidateProfile()
         resetActiveTailProfile()
+        endpointSilenceFramesRemaining = Self.maximumEndpointSilenceFrames
         pendingTransitions.append(.speechReleased(reason: reason))
+    }
+
+    private mutating func endpointSilenceOutput(for chunk: AudioChunk) -> [AudioChunk] {
+        guard endpointSilenceFramesRemaining > 0 else { return [] }
+
+        endpointSilenceFramesRemaining = max(
+            0,
+            endpointSilenceFramesRemaining - chunk.frameCount
+        )
+        if endpointSilenceFramesRemaining == 0 {
+            pendingTransitions.append(.endpointSilenceExhausted)
+        }
+        return [silenced(chunk)]
     }
 
     private func silenced(_ chunk: AudioChunk) -> AudioChunk {
