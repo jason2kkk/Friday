@@ -78,7 +78,9 @@ optional provider contract and is not allowed to replace Dictate's
 - Screen capture permission remains independent: denying it leaves Dictate and ordinary Talk available
 - Dormant on-device `Hey Friday` implementation behind a replaceable `WakeWordProviding` boundary for a future opt-in mode
 - Interruptible speech-to-speech Talk session using high-eagerness semantic VAD, client-owned response creation, PCM16 playback, and client-side WebSocket truncation
-- Realtime Talk tool routing for draft, explicit confirmation, discard, status, and cancellation is exposed only when final input transcription is configured; every tool result is returned to the same conversation
+- Realtime Talk always exposes a bounded `propose_focused_input_write` action tool; background Work draft, confirmation, status, and cancellation tools remain hidden unless final input transcription is configured
+- Voice Agent startup locks one non-password Accessibility input target in local memory; a write request can only create a typed `ActionProposal`, and the expanded island shows the complete text, target application, undo boundary, and explicit `取消 / 写入` controls before execution
+- Each visual permission is bound to one Action and one session-scoped foreground Work identity, is consumed at most once, and returns a typed `ActionReceipt`; the model cannot authorize or execute the write, and sending or submitting remains unsupported
 - Session-scoped `WorkDraft` correlation: model intent and final input transcription must share one Friday TurnID, and a separate final transcript must explicitly say “确认提交” before formal Mock Work creation
 - In-memory Mock Work Runtime with idempotent submission, query, cancellation, bounded polling, and explicit `mock_read_only` results
 - Background Work remains independent from Talk: accepted work does not disconnect the conversation, completion waits while the user is speaking, and interrupted result delivery is queued again
@@ -133,10 +135,10 @@ optional provider contract and is not allowed to replace Dictate's
 
 Move the bounded Agent path forward without weakening the existing Dictate and Talk flows:
 
-1. Choose and deliberately enable one final user-turn ASR Provider, then verify the WorkDraft restatement and “确认提交” flow in a bounded real Talk session.
-2. Replace the in-memory Work Store with the documented local SQLite store and add restart recovery.
-3. Add a task surface for inspecting and cancelling Work without exposing internal model or session details.
-4. Only then introduce the first structured `ActionProposal`, permission confirmation, and reversible local action.
+1. Validate the first visual-confirmation action on a real Mac: TextEdit and one Web/Electron input, zero writes before confirmation, exactly one write after confirmation, `Cmd+Z`, target loss, and continued Talk while waiting.
+2. Choose and deliberately enable one final user-turn ASR Provider, then verify the WorkDraft restatement and “确认提交” flow in a bounded real Talk session.
+3. Replace the in-memory Work Store with the documented local SQLite store and add restart recovery.
+4. Add a task surface for inspecting and cancelling Work, then introduce the next semantic adapter without expanding into send, submit, destructive, or coordinate-based actions.
 
 The OpenAI API key should stay on the backend, never inside the Mac app bundle.
 

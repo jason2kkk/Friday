@@ -70,7 +70,16 @@ Talk sessions always expose the silent `wait_for_user` tool, but its contract is
 limited to high-confidence silence, brief non-speech noise, or obvious playback
 residue. Sustained or intelligible speech must receive an answer or a short
 clarification; the macOS runtime also overrides a silent tool call when the
-Provider measured a sustained user turn. `submit_work`,
+Provider measured a sustained user turn. Talk also always exposes
+`propose_focused_input_write`, which can only send a complete text proposal back
+to the macOS client. The client attaches the input target locked at Talk startup,
+shows a complete visual preview, and executes one local write only after the user
+clicks `写入`. A voice response, tool call, or model-generated confirmation never
+grants permission. This foreground action does not send or submit content and
+does not require final ASR because it has zero side effects before the independent
+visual confirmation.
+
+`submit_work`,
 `confirm_work`, `discard_work_draft`, `get_work_status`, and `cancel_work` are
 exposed only when final input transcription is configured, because their local
 confirmation boundary cannot work safely without the user's final transcript.
@@ -80,11 +89,13 @@ separate final transcript containing an explicit “确认提交” before it ca
 formal Work API. High-confidence non-user audio can end through `wait_for_user`
 without producing a spoken reply. Accepted work runs independently from the Realtime
 connection, so the user can keep talking while Friday polls the Work status.
-The current executor is intentionally `mock_read_only`: it waits briefly and
+The background Work executor is intentionally `mock_read_only`: it waits briefly and
 returns a bounded verification result without reading or changing files, apps,
 accounts, or external services. Work is stored only in service memory, is capped
 at 100 records, and is lost when the service restarts. This is an architecture
-and interaction checkpoint, not a production Agent backend.
+and interaction checkpoint, not a production Agent backend. The separately
+implemented foreground input write is session-scoped in the macOS process; it
+does not create a persisted Work record and is cleared when Talk ends.
 
 Optional environment variables:
 
@@ -150,8 +161,9 @@ npm test
 
 The test suite uses a local fake OpenAI upstream. It verifies local liveness
 remains responsive while model readiness is bounded, along with Dictate and
-Talk credential payloads, client-owned response creation, final-ASR-gated Agent
-tools, semantic VAD and interruption settings, optional transcription
+Talk credential payloads, client-owned response creation, the always-available
+visual write proposal, final-ASR-gated background Work tools, semantic VAD and
+interruption settings, optional transcription
 configuration, unlimited cumulative issuance, credential-burst protection,
 billing status, Work submission/query/cancellation, and secret redaction without
 contacting OpenAI.

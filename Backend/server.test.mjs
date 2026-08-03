@@ -1,5 +1,5 @@
 // 功能：验证本地 Realtime 凭证服务的 HTTP 契约、会话配置和安全保护是否符合预期。
-// 职责：启动本地假 OpenAI 上游，覆盖存活/就绪分层、凭证签发、Talk 参数、累计计数、重试保护、错误脱敏和诊断。
+// 职责：启动本地假 OpenAI 上游，覆盖存活/就绪分层、凭证签发、Talk 动作与 Work 工具边界、累计计数、重试保护、错误脱敏和诊断。
 // 边界：测试不读取真实 API Key，不访问真实 OpenAI，也不创建付费模型响应。
 
 import test from "node:test";
@@ -69,13 +69,16 @@ test("session service issues credentials without a cumulative cap and tracks loc
   assert.equal(health.body.dictation_reasoning_effort, "minimal");
   assert.equal(health.body.talk_model, "gpt-realtime-2.1");
   assert.equal(health.body.talk_reasoning_effort, "low");
-  assert.equal(health.body.talk_prompt_version, "2026-08-03.turn-taking-v4");
+  assert.equal(health.body.talk_prompt_version, "2026-08-03.focused-write-v1");
   assert.equal(health.body.talk_response_creation, "client");
   assert.equal(health.body.sessions_issued, 0);
   assert.equal(health.body.burst_protection_enabled, true);
   assert.equal(health.body.account_balance_readable, false);
   assert.equal(health.body.billing_status, "unknown");
-  assert.equal(health.body.agent_mode, "mock_read_only");
+  assert.equal(health.body.agent_mode, "confirmed_local_write");
+  assert.equal(health.body.agent_tools_enabled, true);
+  assert.equal(health.body.work_tools_enabled, true);
+  assert.equal(health.body.visual_write_confirmation_enabled, true);
   assert.equal(health.body.input_transcription_enabled, true);
   assert.equal(health.body.input_transcription_model, "gpt-realtime-whisper");
   assert.equal("daily_sessions_remaining" in health.body, false);
@@ -352,9 +355,11 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.equal(credential.body.vad_eagerness, "high");
   assert.equal(credential.body.reasoning_effort, "low");
   assert.equal(credential.body.max_output_tokens, 640);
-  assert.equal(credential.body.prompt_version, "2026-08-03.turn-taking-v4");
+  assert.equal(credential.body.prompt_version, "2026-08-03.focused-write-v1");
   assert.equal(credential.body.response_creation, "client");
   assert.equal(credential.body.agent_tools_enabled, true);
+  assert.equal(credential.body.work_tools_enabled, true);
+  assert.equal(credential.body.visual_write_confirmation_enabled, true);
   assert.equal(credential.body.input_transcription_enabled, true);
   assert.equal(credential.body.input_transcription_model, "gpt-4o-mini-transcribe");
   assert.equal(credentialBody.session.model, "gpt-realtime-2.1");
@@ -375,6 +380,7 @@ test("talk mode creates a client-controlled audio session with background-noise 
     credentialBody.session.tools.map(tool => tool.name),
     [
       "wait_for_user",
+      "propose_focused_input_write",
       "submit_work",
       "confirm_work",
       "discard_work_draft",
@@ -385,9 +391,11 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.match(credentialBody.session.instructions, /简体中文是默认回复语言/);
   assert.match(credentialBody.session.instructions, /不要因为口音、语气词、英文产品名/);
   assert.match(credentialBody.session.instructions, /只有用户明确要求“创建后台测试任务”/);
+  assert.match(credentialBody.session.instructions, /调用 propose_focused_input_write/);
+  assert.match(credentialBody.session.instructions, /不要把语音同意当作权限/);
   assert.match(credentialBody.session.instructions, /只有下一轮用户清楚说出“确认提交”/);
   assert.match(credentialBody.session.instructions, /最终用户转写缺失、失败/);
-  assert.match(credentialBody.session.instructions, /当前没有可用的真实执行工具/);
+  assert.match(credentialBody.session.instructions, /当前没有可用工具/);
   assert.match(credentialBody.session.instructions, /用户要求翻译、解释、总结或识别选区时/);
   assert.match(credentialBody.session.instructions, /调用 wait_for_user 后不要继续生成口头回复/);
   assert.match(credentialBody.session.instructions, /持续或完整的人声绝不能/);
@@ -402,6 +410,13 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.match(waitForUserTool.description, /内容不清楚时应简短澄清/);
   assert.deepEqual(waitForUserTool.parameters.required, []);
 
+  const focusedInputWriteTool = credentialBody.session.tools.find(
+    tool => tool.name === "propose_focused_input_write"
+  );
+  assert.match(focusedInputWriteTool.description, /只创建本地 ActionProposal/);
+  assert.match(focusedInputWriteTool.description, /点击‘写入’/);
+  assert.deepEqual(focusedInputWriteTool.parameters.required, ["text"]);
+
   const submitWorkTool = credentialBody.session.tools.find(
     tool => tool.name === "submit_work"
   );
@@ -410,7 +425,7 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.doesNotMatch(submitWorkTool.description, /current information/i);
 });
 
-test("talk hides Agent tools when final input transcription is disabled", async (t) => {
+test("talk keeps visual write proposal but hides Work tools without final ASR", async (t) => {
   let credentialBody = null;
   const upstream = createServer(async (request, response) => {
     if (request.method === "GET" && request.url.startsWith("/v1/models/")) {
@@ -457,10 +472,12 @@ test("talk hides Agent tools when final input transcription is disabled", async 
 
   assert.equal(credential.status, 200);
   assert.equal(credential.body.input_transcription_enabled, false);
-  assert.equal(credential.body.agent_tools_enabled, false);
+  assert.equal(credential.body.agent_tools_enabled, true);
+  assert.equal(credential.body.work_tools_enabled, false);
+  assert.equal(credential.body.visual_write_confirmation_enabled, true);
   assert.deepEqual(
     credentialBody.session.tools.map(tool => tool.name),
-    ["wait_for_user"]
+    ["wait_for_user", "propose_focused_input_write"]
   );
   assert.equal(
     credentialBody.session.audio.input.turn_detection.create_response,
