@@ -1,5 +1,5 @@
-// 功能：处理 Talk Provider 事件、工具调用与后台 Work 结果回传。
-// 职责：关联用户轮次和模型回复，执行受控插话、播放状态转换、工具回执与完成结果播报。
+// 功能：处理 Talk Provider 事件、本地动作或后台 Work 工具调用及结果回传。
+// 职责：关联用户轮次和模型回复，执行受控插话、播放状态转换、Action/Work 路由、工具回执与结果播报。
 // 边界：不负责会话启动、音频采集实现、屏幕捕获实现或诊断持久化。
 
 import Foundation
@@ -172,7 +172,7 @@ extension ConversationCoordinator {
             )
             turnCorrelator.markActiveTurnAwaitingResponse()
             state = .assistantPreparing
-            presentation.show(expression: .awake, source: .idle)
+            presentation.show(expression: .awake, source: .assistant)
             scheduleUserResponse(for: turn)
         case .userTranscriptionCompleted(let providerTranscript):
             if suppressedPlaybackSpeechItemIDs.remove(providerTranscript.itemID) != nil {
@@ -281,7 +281,7 @@ extension ConversationCoordinator {
             idleTimeoutTask?.cancel()
             isProviderResponseOutstanding = true
             state = .assistantPreparing
-            presentation.show(expression: .awake, source: .idle)
+            presentation.show(expression: .awake, source: .assistant)
         case .assistantItemStarted(let identity):
             guard state != .selectingScreenRegion,
                   state != .capturingScreenRegion else { return }
@@ -496,10 +496,15 @@ extension ConversationCoordinator {
 
         toolCallTasks[call.callID] = Task { [weak self] in
             guard let self else { return }
-            let resolution = await workBridge.resolve(
-                call,
-                sourceTurnID: sourceTurnID
-            )
+            let resolution: ConversationToolResolution
+            if actionBridge.canResolve(call.name) {
+                resolution = await actionBridge.resolve(call)
+            } else {
+                resolution = await workBridge.resolve(
+                    call,
+                    sourceTurnID: sourceTurnID
+                )
+            }
             var resolutionAttributes = diagnosticTimeline.recordToolResolution(call.callID)
             resolutionAttributes["call_id"] = call.callID.description
             resolutionAttributes["tool"] = call.name
@@ -702,7 +707,7 @@ extension ConversationCoordinator {
             presentingWork = work
             isProviderResponseOutstanding = true
             state = .assistantPreparing
-            presentation.show(expression: .awake, source: .idle)
+            presentation.show(expression: .awake, source: .assistant)
             do {
                 try await conversationProvider.presentCompletedWork(
                     "\(result.summary) \(result.detail)"

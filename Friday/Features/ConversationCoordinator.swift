@@ -1,5 +1,5 @@
 // 功能：编排 Talk 从快捷键或可选唤醒入口到双向语音交流、图片上下文、诊断和结束清理的完整用户流程。
-// 职责：协调可替换 Talk Runtime、Presentation 与屏幕上下文，管理连接缓冲、轮次身份、端点超时、插话截断、响应风暴保护、无内容诊断和错误恢复。
+// 职责：协调可替换 Talk Runtime、Action/Work Bridge、Presentation 与屏幕上下文，管理连接缓冲、轮次身份、端点、插话和错误恢复。
 // 边界：不直接实现 WebSocket、AVAudioEngine、屏幕截图或窗口绘制，也不持有长期 API Key，不把用户音频或对话文本写入诊断。
 
 import Foundation
@@ -72,6 +72,7 @@ final class ConversationCoordinator: ObservableObject {
     private let screenSelectionController: ScreenRegionSelecting
     let presentation: any ConversationPresenting
     let workBridge: ConversationWorkBridge
+    let actionBridge: ConversationActionBridge
     let diagnostics: any ConversationDiagnosticsRecording
     private let openingGreetingDelay: Duration
     private let userTurnResponseGrace: Duration
@@ -118,6 +119,7 @@ final class ConversationCoordinator: ObservableObject {
         screenSelectionController: ScreenRegionSelecting? = nil,
         presentation: any ConversationPresenting,
         workBridge: ConversationWorkBridge? = nil,
+        actionBridge: ConversationActionBridge? = nil,
         diagnostics: (any ConversationDiagnosticsRecording)? = nil,
         openingGreetingDelay: Duration = ConversationLimits.openingGreetingDelay,
         userTurnResponseGrace: Duration = ConversationLimits.userTurnResponseGrace
@@ -133,6 +135,7 @@ final class ConversationCoordinator: ObservableObject {
             screenSelectionController: screenSelectionController,
             presentation: presentation,
             workBridge: workBridge,
+            actionBridge: actionBridge,
             diagnostics: diagnostics,
             openingGreetingDelay: openingGreetingDelay,
             userTurnResponseGrace: userTurnResponseGrace
@@ -147,6 +150,7 @@ final class ConversationCoordinator: ObservableObject {
         screenSelectionController: ScreenRegionSelecting? = nil,
         presentation: any ConversationPresenting,
         workBridge: ConversationWorkBridge? = nil,
+        actionBridge: ConversationActionBridge? = nil,
         diagnostics: (any ConversationDiagnosticsRecording)? = nil,
         openingGreetingDelay: Duration = ConversationLimits.openingGreetingDelay,
         userTurnResponseGrace: Duration = ConversationLimits.userTurnResponseGrace
@@ -161,6 +165,7 @@ final class ConversationCoordinator: ObservableObject {
             ?? ScreenRegionSelectionController()
         self.presentation = presentation
         self.workBridge = workBridge ?? ConversationWorkBridge()
+        self.actionBridge = actionBridge ?? ConversationActionBridge()
         self.diagnostics = diagnostics ?? NoopConversationDiagnosticsRecorder()
         self.openingGreetingDelay = openingGreetingDelay
         self.userTurnResponseGrace = userTurnResponseGrace
@@ -203,6 +208,7 @@ final class ConversationCoordinator: ObservableObject {
         sessionSnapshot = sessionLedger.endSession()
         turnCorrelator.endSession()
         workBridge.endConversationSession()
+        actionBridge.endConversationSession()
         presentation.hide()
         isProviderResponseOutstanding = false
         state = .dormant
@@ -488,6 +494,7 @@ final class ConversationCoordinator: ObservableObject {
             diagnostics.beginSession(sessionID, state: state.diagnosticName)
             turnCorrelator.beginSession(sessionID)
             workBridge.beginConversationSession()
+            actionBridge.beginConversationSession()
             recordDiagnostic(
                 "activation.received",
                 attributes: ["source": activation]
@@ -495,6 +502,7 @@ final class ConversationCoordinator: ObservableObject {
         } else {
             turnCorrelator.endSession()
             workBridge.endConversationSession()
+            actionBridge.endConversationSession()
         }
         pendingInputChunks.removeAll(keepingCapacity: true)
         pendingInputFrameCount = 0
@@ -709,7 +717,7 @@ final class ConversationCoordinator: ObservableObject {
             openingGreetingTask = nil
             idleTimeoutTask?.cancel()
             state = .assistantPreparing
-            presentation.show(expression: .awake, source: .idle)
+            presentation.show(expression: .awake, source: .assistant)
             let greetingTurn = turnCorrelator.beginOpeningGreeting()
             recordDiagnostic("opening_greeting.requested", turn: greetingTurn)
             isProviderResponseOutstanding = true
@@ -785,6 +793,7 @@ final class ConversationCoordinator: ObservableObject {
         sessionSnapshot = sessionLedger.endSession()
         turnCorrelator.endSession()
         workBridge.endConversationSession()
+        actionBridge.endConversationSession()
         isProviderConnected = false
         pendingInputChunks.removeAll(keepingCapacity: false)
         pendingInputFrameCount = 0

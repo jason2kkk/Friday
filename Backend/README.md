@@ -66,9 +66,16 @@ GET  /v1/work/:work_id
 POST /v1/work/:work_id/cancel
 ```
 
-Talk sessions always expose the silent `wait_for_user` tool, but its contract is
-limited to high-confidence silence, brief non-speech noise, or obvious playback
-residue. Sustained or intelligible speech must receive an answer or a short
+Talk sessions always expose the silent `wait_for_user` tool and the reversible
+`write_focused_input` tool. The write tool carries final text plus an optional
+user-spoken application name; the macOS client resolves the running app,
+revalidates its focused editable element, performs one local paste, and returns
+a structured receipt before the model can claim success. This path never sends,
+submits, publishes, purchases, deletes, or changes permissions.
+
+The `wait_for_user` contract is limited to high-confidence silence, brief
+non-speech noise, or obvious playback residue. Sustained or intelligible speech
+must receive an answer or a short
 clarification; the macOS runtime also overrides a silent tool call when the
 Provider measured a sustained user turn. `submit_work`,
 `confirm_work`, `discard_work_draft`, `get_work_status`, and `cancel_work` are
@@ -94,7 +101,7 @@ FRIDAY_REALTIME_MODEL=gpt-realtime-2.1
 FRIDAY_DICTATION_REASONING_EFFORT=minimal
 FRIDAY_TALK_MODEL=gpt-realtime-2.1
 FRIDAY_TALK_VOICE=marin
-FRIDAY_TALK_MAX_OUTPUT_TOKENS=640
+FRIDAY_TALK_MAX_OUTPUT_TOKENS=220
 FRIDAY_TALK_VAD_EAGERNESS=high
 FRIDAY_TALK_REASONING_EFFORT=low
 FRIDAY_REALTIME_API_STYLE=ga
@@ -110,7 +117,7 @@ NO_PROXY=127.0.0.1,localhost
 
 Use `FRIDAY_REALTIME_API_STYLE=legacy` only if the account still exposes the older `/v1/realtime/sessions` client-secret shape. The service never retries an OpenAI request automatically. Upstream errors are sanitized before they reach the app so API key fragments and Authorization values are not shown in Friday's status UI.
 
-The macOS app requests a Talk credential with `{"mode":"talk"}` only after the user taps and releases `Control + Option`. Friday does not capture microphone audio or create a credential while idle. Dictate uses `gpt-realtime-2.1` with minimal reasoning and text-only output for one-pass transcription cleanup. Talk uses the same model with low reasoning, audio output, the `marin` voice, near-field noise reduction, and high-eagerness semantic VAD. Realtime reports speech endpoints but does not create Talk responses automatically. The macOS client keeps a 450 ms continuation grace after `speech_stopped`, cancels that plan if speech resumes, and then sends one `response.create`. Server-side response interruption is disabled: the client only cancels real playback after its AEC-cleaned input gate detects sustained, dynamically changing near-field speech and Realtime emits a matching speech-start event. A rejected playback-time audio item is deleted and does not create a response. Short impacts and steady background sound are ignored. This is an acoustic speech-likeness gate, not semantic intent recognition. Reasoning effort is sent only for Realtime 2-family models, so explicit older-model overrides remain compatible. Friday does not impose daily, cumulative-session, Talk-duration, response-count, or total-token development quotas. It keeps a 20-second post-response idle cleanup and a 640-token per-response ceiling; shorter replies only consume the tokens they actually generate.
+The macOS app requests a Talk credential with `{"mode":"talk"}` only after the user taps and releases `Control + Option`. Friday does not capture microphone audio or create a credential while idle. Dictate uses `gpt-realtime-2.1` with minimal reasoning and text-only output for one-pass transcription cleanup. Talk uses the same model with low reasoning, audio output, the `marin` voice, near-field noise reduction, and high-eagerness semantic VAD. Realtime reports speech endpoints but does not create Talk responses automatically. The macOS client keeps a 450 ms continuation grace after `speech_stopped`, cancels that plan if speech resumes, and then sends one `response.create`. Server-side response interruption is disabled: the client only cancels real playback after its AEC-cleaned input gate detects sustained, dynamically changing near-field speech and Realtime emits a matching speech-start event. A rejected playback-time audio item is deleted and does not create a response. Short impacts and steady background sound are ignored. This is an acoustic speech-likeness gate, not semantic intent recognition. Reasoning effort is sent only for Realtime 2-family models, so explicit older-model overrides remain compatible. Friday does not impose daily, cumulative-session, Talk-duration, response-count, or total-token development quotas. It keeps a 20-second post-response idle cleanup, a 220-token ordinary response ceiling, and a 48-token tool-result follow-up ceiling; shorter replies only consume the tokens they actually generate.
 
 Check local process liveness without contacting OpenAI:
 
@@ -150,8 +157,8 @@ npm test
 
 The test suite uses a local fake OpenAI upstream. It verifies local liveness
 remains responsive while model readiness is bounded, along with Dictate and
-Talk credential payloads, client-owned response creation, final-ASR-gated Agent
-tools, semantic VAD and interruption settings, optional transcription
+Talk credential payloads, client-owned response creation, the reversible write
+tool without final ASR, final-ASR-gated Work tools, semantic VAD and interruption settings, optional transcription
 configuration, unlimited cumulative issuance, credential-burst protection,
 billing status, Work submission/query/cancellation, and secret redaction without
 contacting OpenAI.

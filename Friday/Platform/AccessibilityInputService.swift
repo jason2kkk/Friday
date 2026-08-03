@@ -107,11 +107,42 @@ final class AccessibilityInputService {
         guard trusted else { return .accessibilityDenied }
 
         let frontmostApplication = NSWorkspace.shared.frontmostApplication
-        if frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+        return captureTarget(
+            in: frontmostApplication,
+            fallbackApplicationName: "未知应用",
+            includeSystemWideCandidate: true
+        )
+    }
+
+    func captureFocusedTarget(
+        processIdentifier: pid_t,
+        applicationName: String
+    ) -> InputTargetResult {
+        guard isTrusted else { return .accessibilityDenied }
+        guard let application = NSRunningApplication(processIdentifier: processIdentifier),
+              !application.isTerminated else {
+            return .noFocusedElement
+        }
+        return captureTarget(
+            in: application,
+            fallbackApplicationName: applicationName,
+            includeSystemWideCandidate: false
+        )
+    }
+
+    private func captureTarget(
+        in application: NSRunningApplication?,
+        fallbackApplicationName: String,
+        includeSystemWideCandidate: Bool
+    ) -> InputTargetResult {
+        if application?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
             return .fridayFocused
         }
 
-        let lookup = focusedElementCandidates(frontmostApplication: frontmostApplication)
+        let lookup = focusedElementCandidates(
+            application: application,
+            includeSystemWideCandidate: includeSystemWideCandidate
+        )
         var foundNonEditableElement = false
 
         for candidate in lookup.elements {
@@ -136,7 +167,7 @@ final class AccessibilityInputService {
             }
         }
 
-        let applicationName = frontmostApplication?.localizedName ?? "未知应用"
+        let applicationName = application?.localizedName ?? fallbackApplicationName
         logger.notice(
             "No editable focus in \(applicationName, privacy: .public); system AXError=\(lookup.systemResult.rawValue, privacy: .public)"
         )
@@ -302,7 +333,10 @@ final class AccessibilityInputService {
     }
 
     private func isStillFocused(_ target: AXUIElement) -> Bool {
-        let lookup = focusedElementCandidates(frontmostApplication: NSWorkspace.shared.frontmostApplication)
+        let lookup = focusedElementCandidates(
+            application: NSWorkspace.shared.frontmostApplication,
+            includeSystemWideCandidate: true
+        )
         for candidate in lookup.elements {
             if CFEqual(candidate, target) {
                 return true
@@ -321,7 +355,8 @@ final class AccessibilityInputService {
     }
 
     private func focusedElementCandidates(
-        frontmostApplication: NSRunningApplication?
+        application: NSRunningApplication?,
+        includeSystemWideCandidate: Bool
     ) -> (
         elements: [AXUIElement],
         focusedWindow: AXUIElement?,
@@ -331,16 +366,20 @@ final class AccessibilityInputService {
         var elements: [AXUIElement] = []
         var unexpectedErrors: [AXError] = []
         var focusedWindow: AXUIElement?
+        var systemResult: AXError = .success
 
-        let systemLookup = elementAttribute(
-            kAXFocusedUIElementAttribute,
-            from: AXUIElementCreateSystemWide()
-        )
-        appendUnique(systemLookup.element, to: &elements)
-        collectUnexpected(systemLookup.result, into: &unexpectedErrors)
+        if includeSystemWideCandidate {
+            let systemLookup = elementAttribute(
+                kAXFocusedUIElementAttribute,
+                from: AXUIElementCreateSystemWide()
+            )
+            systemResult = systemLookup.result
+            appendUnique(systemLookup.element, to: &elements)
+            collectUnexpected(systemLookup.result, into: &unexpectedErrors)
+        }
 
-        if let frontmostApplication {
-            let applicationElement = AXUIElementCreateApplication(frontmostApplication.processIdentifier)
+        if let application {
+            let applicationElement = AXUIElementCreateApplication(application.processIdentifier)
             let applicationLookup = elementAttribute(
                 kAXFocusedUIElementAttribute,
                 from: applicationElement
@@ -358,7 +397,7 @@ final class AccessibilityInputService {
             }
         }
 
-        return (elements, focusedWindow, systemLookup.result, unexpectedErrors.first)
+        return (elements, focusedWindow, systemResult, unexpectedErrors.first)
     }
 
     // Some Web and Electron apps omit AXFocusedUIElement but mark one descendant as focused.

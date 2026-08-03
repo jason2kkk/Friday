@@ -1,5 +1,5 @@
-// 功能：验证 Talk 会话身份、展示映射、音频打断和区域框选等高风险交互边界。
-// 职责：覆盖会话账本、端点静音交接、响应循环保护、迟到事件隔离、回声尾音、屏幕指引布局和图片上下文 ID 等纯逻辑。
+// 功能：验证 Talk 会话身份、展示映射、音频打断、Action 路由和区域框选等高风险交互边界。
+// 职责：覆盖会话账本、端点静音交接、响应保护、迟到事件、回声尾音、可撤销工具回执、屏幕指引和图片上下文等纯逻辑。
 // 边界：不启动真实音频设备，不请求屏幕权限，不连接 Realtime 服务，也不产生付费模型响应。
 
 import XCTest
@@ -1053,6 +1053,45 @@ final class TalkInteractionTests: XCTestCase {
         coordinator.stop()
     }
 
+    func testFocusedInputWriteReturnsReceiptWithoutEndingConversation() async {
+        let provider = MockConversationProvider()
+        let executor = TalkTestLocalActionExecutor()
+        let coordinator = ConversationCoordinator(
+            activationMode: .shortcut,
+            wakeWordProvider: MockWakeWordService(),
+            conversationProvider: provider,
+            audioService: WorkTestAudioService(),
+            presentation: InputOverlayConversationPresenter(
+                model: InputOverlayModel(),
+                controller: nil
+            ),
+            actionBridge: ConversationActionBridge(executor: executor)
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.isConnected }
+        provider.simulate(
+            .toolCall(
+                ConversationToolCall(
+                    callID: ConversationToolCallID("call_write_codex")!,
+                    name: ConversationActionBridge.focusedInputWriteToolName,
+                    argumentsJSON: #"{"text":"1、2、3、4","application":"Codex"}"#,
+                    responseID: ConversationProviderResponseID("response_write_codex")
+                )
+            )
+        )
+
+        await waitUntil { provider.toolOutputs.count == 1 }
+
+        XCTAssertEqual(executor.proposals.count, 1)
+        XCTAssertEqual(executor.proposals[0].target, "Codex")
+        XCTAssertTrue(provider.toolOutputs[0].output.contains(#""status":"succeeded""#))
+        XCTAssertTrue(provider.toolOutputs[0].createsResponse)
+        XCTAssertTrue(provider.isConnected)
+        XCTAssertTrue(coordinator.isConversationActive)
+        coordinator.stop()
+    }
+
     func testCompletedWorkWaitsForUserAndRetriesAfterInterruption() async throws {
         let provider = MockConversationProvider()
         let workService = ControlledWorkService()
@@ -1293,6 +1332,30 @@ final class TalkInteractionTests: XCTestCase {
             )
         )
     }
+}
+
+@MainActor
+private final class TalkTestLocalActionExecutor: LocalActionExecuting {
+    private(set) var proposals: [ActionProposal] = []
+
+    func lockSessionTarget(_ target: FocusedInputTarget?) {}
+
+    func execute(_ proposal: ActionProposal) async -> ActionReceipt {
+        proposals.append(proposal)
+        return ActionReceipt(
+            id: .make(),
+            workID: proposal.workID,
+            actionID: proposal.id,
+            status: .succeeded,
+            targetRevision: "target_test",
+            observedResult: "目标输入框的文本变化已复验",
+            undoToken: "system_undo:test",
+            executedAt: Date(),
+            error: nil
+        )
+    }
+
+    func clearSessionTarget() {}
 }
 
 @MainActor

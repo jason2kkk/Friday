@@ -69,13 +69,15 @@ test("session service issues credentials without a cumulative cap and tracks loc
   assert.equal(health.body.dictation_reasoning_effort, "minimal");
   assert.equal(health.body.talk_model, "gpt-realtime-2.1");
   assert.equal(health.body.talk_reasoning_effort, "low");
-  assert.equal(health.body.talk_prompt_version, "2026-08-03.turn-taking-v4");
+  assert.equal(health.body.talk_prompt_version, "2026-08-03.application-target-write-v1");
   assert.equal(health.body.talk_response_creation, "client");
   assert.equal(health.body.sessions_issued, 0);
   assert.equal(health.body.burst_protection_enabled, true);
   assert.equal(health.body.account_balance_readable, false);
   assert.equal(health.body.billing_status, "unknown");
-  assert.equal(health.body.agent_mode, "mock_read_only");
+  assert.equal(health.body.agent_mode, "automatic_reversible_write");
+  assert.equal(health.body.work_runtime, "mock_read_only");
+  assert.equal(health.body.automatic_focused_write_enabled, true);
   assert.equal(health.body.input_transcription_enabled, true);
   assert.equal(health.body.input_transcription_model, "gpt-realtime-whisper");
   assert.equal("daily_sessions_remaining" in health.body, false);
@@ -352,7 +354,7 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.equal(credential.body.vad_eagerness, "high");
   assert.equal(credential.body.reasoning_effort, "low");
   assert.equal(credential.body.max_output_tokens, 640);
-  assert.equal(credential.body.prompt_version, "2026-08-03.turn-taking-v4");
+  assert.equal(credential.body.prompt_version, "2026-08-03.application-target-write-v1");
   assert.equal(credential.body.response_creation, "client");
   assert.equal(credential.body.agent_tools_enabled, true);
   assert.equal(credential.body.input_transcription_enabled, true);
@@ -375,6 +377,7 @@ test("talk mode creates a client-controlled audio session with background-noise 
     credentialBody.session.tools.map(tool => tool.name),
     [
       "wait_for_user",
+      "write_focused_input",
       "submit_work",
       "confirm_work",
       "discard_work_draft",
@@ -387,13 +390,15 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.match(credentialBody.session.instructions, /只有用户明确要求“创建后台测试任务”/);
   assert.match(credentialBody.session.instructions, /只有下一轮用户清楚说出“确认提交”/);
   assert.match(credentialBody.session.instructions, /最终用户转写缺失、失败/);
-  assert.match(credentialBody.session.instructions, /当前没有可用的真实执行工具/);
+  assert.match(credentialBody.session.instructions, /其他真实动作时，当前没有可用工具/);
   assert.match(credentialBody.session.instructions, /用户要求翻译、解释、总结或识别选区时/);
   assert.match(credentialBody.session.instructions, /调用 wait_for_user 后不要继续生成口头回复/);
   assert.match(credentialBody.session.instructions, /持续或完整的人声绝不能/);
   assert.match(credentialBody.session.instructions, /不能理解就只问一个简短澄清问题/);
   assert.match(credentialBody.session.instructions, /先说核心结论/);
   assert.match(credentialBody.session.instructions, /完整结束当前句子/);
+  assert.match(credentialBody.session.instructions, /不说“请告诉我你的需求”/);
+  assert.match(credentialBody.session.instructions, /Codex.*com\.openai\.codex/);
 
   const waitForUserTool = credentialBody.session.tools.find(
     tool => tool.name === "wait_for_user"
@@ -401,6 +406,13 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.match(waitForUserTool.description, /没有持续、可辨认的人声/);
   assert.match(waitForUserTool.description, /内容不清楚时应简短澄清/);
   assert.deepEqual(waitForUserTool.parameters.required, []);
+
+  const writeFocusedInputTool = credentialBody.session.tools.find(
+    tool => tool.name === "write_focused_input"
+  );
+  assert.match(writeFocusedInputTool.description, /可通过 Command-Z 撤销/);
+  assert.deepEqual(writeFocusedInputTool.parameters.required, ["text"]);
+  assert.equal(writeFocusedInputTool.parameters.properties.application.type, "string");
 
   const submitWorkTool = credentialBody.session.tools.find(
     tool => tool.name === "submit_work"
@@ -410,7 +422,7 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.doesNotMatch(submitWorkTool.description, /current information/i);
 });
 
-test("talk hides Agent tools when final input transcription is disabled", async (t) => {
+test("talk keeps reversible input write but hides Work tools without final ASR", async (t) => {
   let credentialBody = null;
   const upstream = createServer(async (request, response) => {
     if (request.method === "GET" && request.url.startsWith("/v1/models/")) {
@@ -457,10 +469,11 @@ test("talk hides Agent tools when final input transcription is disabled", async 
 
   assert.equal(credential.status, 200);
   assert.equal(credential.body.input_transcription_enabled, false);
-  assert.equal(credential.body.agent_tools_enabled, false);
+  assert.equal(credential.body.agent_tools_enabled, true);
+  assert.equal(credential.body.automatic_focused_write_enabled, true);
   assert.deepEqual(
     credentialBody.session.tools.map(tool => tool.name),
-    ["wait_for_user"]
+    ["wait_for_user", "write_focused_input"]
   );
   assert.equal(
     credentialBody.session.audio.input.turn_detection.create_response,

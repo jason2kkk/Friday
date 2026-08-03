@@ -91,7 +91,7 @@ struct ConversationWaveformView: View {
             IslandWaveformView(
                 level: level,
                 waveformLevels: waveformLevels,
-                isVoiceActive: true,
+                isVoiceActive: isVoiceActive,
                 color: .pink,
                 accessibilityLabel: "Friday 正在说话"
             )

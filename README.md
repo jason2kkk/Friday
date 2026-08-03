@@ -82,7 +82,10 @@ optional provider contract and is not allowed to replace Dictate's
 - `ConversationRuntimeSession` is the single Talk lifecycle boundary: it atomically supplies the Provider, audio port, audio ownership, recording policy, and start/stop behavior to `ConversationCoordinator`
 - The shipping composition remains `DirectRealtimeConversationRuntimeSession`, preserving Friday-owned VoiceProcessingIO audio followed by the existing Realtime Provider connection
 - A zero-cost LiveKit Stage 0 adapter defines short-lived Room credentials, disabled recording, one-runtime audio ownership, Provider event mapping, and versioned Action Proposal/Receipt RPC; it contains no LiveKit SDK, Room connection, or production selection
-- Realtime Talk tool routing for draft, explicit confirmation, discard, status, and cancellation is exposed only when final input transcription is configured; every tool result is returned to the same conversation
+- Realtime Talk always exposes one reversible `write_focused_input` action; Work draft, confirmation, status, and cancellation tools remain gated by final input transcription, and every tool result returns to the same conversation
+- Spoken application intent is resolved on the Mac from the current running-app list, names, bundle identifiers, and bounded aliases; for example, `Codex` resolves to the running `com.openai.codex` app even when macOS displays it as ChatGPT
+- `ConversationActionBridge` converts the Realtime tool call into a provider-neutral `ActionProposal`, while `FocusedInputActionExecutor` revalidates the named or session-locked input and returns an `ActionReceipt` before Friday claims success
+- Only reversible text insertion auto-executes without confirmation; send, submit, publish, purchase, delete, and permission-changing requests do not enter this path
 - Session-scoped `WorkDraft` correlation: model intent and final input transcription must share one Friday TurnID, and a separate final transcript must explicitly say “确认提交” before formal Mock Work creation
 - In-memory Mock Work Runtime with idempotent submission, query, cancellation, bounded polling, and explicit `mock_read_only` results
 - Background Work remains independent from Talk: accepted work does not disconnect the conversation, completion waits while the user is speaking, and interrupted result delivery is queued again
@@ -99,7 +102,7 @@ optional provider contract and is not allowed to replace Dictate's
 - Server-side automatic interruption is disabled; the client cancels playback only after local sustained near-field confirmation and a matching Realtime speech event, so short impacts and steady background sound do not stop Friday
 - A silent `wait_for_user` tool remains available only for high-confidence silence, brief non-speech noise, or obvious playback residue; sustained or intelligible speech must receive an answer or a short clarification, and the client deterministically overrides a silent tool call after a provider-measured sustained user turn
 - No daily, cumulative-session, Talk-duration, response-count, or total-token development quota
-- Safety-only guards: 640 output tokens per Talk response, 20-second idle cleanup, credential-request burst protection, and a client-side response-storm guard that resets whenever a new user turn begins
+- Safety-only guards: 220 output tokens per ordinary Talk response, 48 for tool follow-up, 20-second idle cleanup, credential-request burst protection, and a client-side response-storm guard that resets whenever a new user turn begins
 - Per-turn first-audio latency and modality-aware `gpt-realtime-2.1` cost diagnostics without recording conversation content
 - A privacy-safe latest-Talk trace at `~/Library/Application Support/Friday/Diagnostics/latest-talk.jsonl`; each new Talk replaces the previous trace and correlates activation, local input-gate candidates/confirmation/release, user speech, response, assistant item, playback, interruption, and tool resolution with per-stage latency fields, without audio, transcripts, screenshots, prompts, or credentials
 - `marin` as the default Talk voice, configurable on the session service
@@ -137,10 +140,10 @@ optional provider contract and is not allowed to replace Dictate's
 
 Move the bounded Agent path forward without weakening the existing Dictate and Talk flows:
 
-1. Choose and deliberately enable one final user-turn ASR Provider, then verify the WorkDraft restatement and “确认提交” flow in a bounded real Talk session.
-2. Replace the in-memory Work Store with the documented local SQLite store and add restart recovery.
-3. Add a task surface for inspecting and cancelling Work without exposing internal model or session details.
-4. Only then connect the existing structured `ActionProposal` contract to permission confirmation and the first reversible local action.
+1. Run the real-Mac acceptance matrix for concise Talk and reversible named-app writing, including Codex, no focused field, target disappearance, and `Command-Z` recovery.
+2. Choose and deliberately enable one final user-turn ASR Provider, then verify the WorkDraft restatement and “确认提交” flow in a bounded real Talk session.
+3. Replace the in-memory Work Store with the documented local SQLite store and add restart recovery.
+4. Add a task surface for inspecting and cancelling Work without exposing internal model or session details.
 
 The LiveKit candidate is intentionally paused after Stage 0. Entering its real-audio Stage 1 requires a separate product and budget decision; the current contracts do not demonstrate `gpt-realtime-2.1` compatibility, AEC quality, interruption quality, latency, or cost.
 

@@ -1,5 +1,5 @@
 // 功能：启动 Friday macOS 应用，常驻顶部灵动岛，并承载应用级 Dictate 和 Talk 工作流。
-// 职责：创建 App 场景与 Runtime 依赖，统一管理权限和就绪状态、快捷键分发、录音处理、目标写回、失败恢复及 Talk 协调器。
+// 职责：创建 App 场景与 Runtime 依赖，统一管理权限、快捷键、录音、目标写回、应用意图、本地 Action 及 Talk 协调器。
 // 边界：不保存长期 API Key 或用户音频；系统访问、音频、网络和浮层细节分别委托给 Platform、Provider 与 Feature 类型。
 
 import AppKit
@@ -107,6 +107,12 @@ final class AppState: ObservableObject {
     private let realtimeProvider: DictationProvider = RealtimeDictationProvider()
     private let overlayModel = InputOverlayModel()
     private var overlayController: InputOverlayController?
+    private lazy var focusedInputActionExecutor = FocusedInputActionExecutor(
+        inputService: accessibilityService
+    )
+    private lazy var conversationActionBridge = ConversationActionBridge(
+        executor: focusedInputActionExecutor
+    )
     private lazy var conversationCoordinator: ConversationCoordinator = {
         let conversationProvider: ConversationProviding
         switch ConversationMode.configured {
@@ -127,6 +133,7 @@ final class AppState: ObservableObject {
                 model: overlayModel,
                 controller: overlayController
             ),
+            actionBridge: conversationActionBridge,
             diagnostics: ConversationJSONLDiagnosticsRecorder()
         )
     }()
@@ -590,7 +597,21 @@ final class AppState: ObservableObject {
                 refreshAfterwards: false
             )
         case .ready, .success, .checkingReadiness, .unavailable:
+            lockConversationActionTarget()
             conversationCoordinator.startConversationFromShortcut()
+        }
+    }
+
+    private func lockConversationActionTarget() {
+        let result = accessibilityService.captureFocusedTarget(promptIfNeeded: false)
+        switch result {
+        case .target(let target):
+            conversationActionBridge.lockSessionTarget(target)
+        case .accessibilityDenied:
+            accessibilityGranted = false
+            conversationActionBridge.lockSessionTarget(nil)
+        case .secureInput, .fridayFocused, .noFocusedElement, .notEditable, .systemError:
+            conversationActionBridge.lockSessionTarget(nil)
         }
     }
 

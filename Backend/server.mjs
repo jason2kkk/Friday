@@ -17,14 +17,14 @@ const serviceHost = "127.0.0.1";
 const servicePort = integerEnvironment("FRIDAY_SESSION_PORT", 8787);
 const realtimeModel = process.env.FRIDAY_REALTIME_MODEL || "gpt-realtime-2.1";
 const talkModel = process.env.FRIDAY_TALK_MODEL || "gpt-realtime-2.1";
-const talkPromptVersion = "2026-08-03.turn-taking-v4";
+const talkPromptVersion = "2026-08-03.application-target-write-v1";
 const dictationReasoningEffort = choiceEnvironment(
   "FRIDAY_DICTATION_REASONING_EFFORT",
   "minimal",
   new Set(["minimal", "low", "medium", "high", "xhigh"])
 );
 const talkVoice = process.env.FRIDAY_TALK_VOICE || "marin";
-const talkMaxOutputTokens = integerEnvironment("FRIDAY_TALK_MAX_OUTPUT_TOKENS", 640);
+const talkMaxOutputTokens = integerEnvironment("FRIDAY_TALK_MAX_OUTPUT_TOKENS", 220);
 const talkVADEagerness = choiceEnvironment(
   "FRIDAY_TALK_VAD_EAGERNESS",
   "high",
@@ -189,7 +189,7 @@ server.listen(servicePort, serviceHost, () => {
     `Input transcription: ${inputTranscriptionModel || "disabled (no additional transcription model)"}`
   );
   console.log(`Environment proxy configured: ${proxyConfigured ? "yes" : "no"}`);
-  console.log("Agent mode: mock read-only (no external actions)");
+  console.log("Local action: automatic reversible input write; Work runtime: mock read-only");
 });
 
 async function createClientCredential(mode = "dictation") {
@@ -314,7 +314,8 @@ async function createClientCredential(mode = "dictation") {
     response_creation: mode === "talk" ? "client" : null,
     input_transcription_enabled: Boolean(inputTranscriptionModel),
     input_transcription_model: inputTranscriptionModel,
-    agent_tools_enabled: mode === "talk" && Boolean(inputTranscriptionModel)
+    agent_tools_enabled: mode === "talk" && activeTalkTools.length > 1,
+    automatic_focused_write_enabled: mode === "talk"
   };
 }
 
@@ -381,8 +382,10 @@ function serviceStatusPayload({ status, upstreamStatus, budget, error = null }) 
     proxy_configured: proxyConfigured,
     input_transcription_enabled: Boolean(inputTranscriptionModel),
     input_transcription_model: inputTranscriptionModel,
-    agent_tools_enabled: Boolean(inputTranscriptionModel),
-    agent_mode: "mock_read_only",
+    agent_tools_enabled: true,
+    automatic_focused_write_enabled: true,
+    agent_mode: "automatic_reversible_write",
+    work_runtime: "mock_read_only",
     sessions_issued: budget.totalCount,
     burst_protection_enabled: true,
     account_balance_readable: false,
@@ -544,6 +547,26 @@ const talkTools = [
   },
   {
     type: "function",
+    name: "write_focused_input",
+    description: "仅当用户明确要求把确定文字写入、放入或填入某个应用或本次对话锁定的输入框时调用。应用名由本机运行列表和 Accessibility 再次验证；工具只执行可通过 Command-Z 撤销的文字写入，不发送、提交、发布、购买或删除。调用工具前不要口头复述、确认或介绍能力，等待工具回执后只给一句最短结果。",
+    parameters: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "要写入输入框的完整最终文字。忠实保留用户原意，不补充用户没有提供的事实。"
+        },
+        application: {
+          type: "string",
+          description: "用户明确指定的目标应用名称，例如 Codex、Xcode 或 Safari。用户没有指定应用时省略，Friday 将使用开始对话时锁定的输入框。"
+        }
+      },
+      required: ["text"],
+      additionalProperties: false
+    }
+  },
+  {
+    type: "function",
     name: "submit_work",
     description: "仅用于内部 Alpha 创建等待用户确认的 WorkDraft。只有用户明确要求‘创建后台测试任务’或‘验证后台任务机制’时才调用。调用后不会创建正式 Work；必须忠实复述返回的 objective，并请用户明确说‘确认提交’或‘取消’。当前执行器是只读 Mock，不会查看或修改真实文件、应用、网页、消息或账号；不得用它代替真实操作，也不得用于闲聊、问答、翻译、解释、总结或屏幕选区理解。",
     parameters: {
@@ -620,9 +643,13 @@ const talkTools = [
   }
 ];
 
+const toolsWithoutFinalASR = new Set([
+  "wait_for_user",
+  "write_focused_input"
+]);
 const activeTalkTools = inputTranscriptionModel
   ? talkTools
-  : talkTools.filter(tool => tool.name === "wait_for_user");
+  : talkTools.filter(tool => toolsWithoutFinalASR.has(tool.name));
 
 const talkInstructions = `
 # 角色与目标
@@ -640,19 +667,29 @@ const talkInstructions = `
 # 意图路由
 1. 闲聊、知识问答、解释、翻译、总结、改写，以及屏幕选区理解：直接回答，不调用工具。
 2. 请求缺少必要信息或语音含糊：只问一个简短澄清问题，不猜测，不调用工具。
-3. 只有用户明确要求“创建后台测试任务”或“验证后台任务机制”时，才调用 submit_work 创建草稿；首次请求绝不能直接说任务已经提交。
-4. 用户要求真实操作文件、应用、邮件、网页、消息或账号时，当前没有可用的真实执行工具。诚实说明暂时不能实际执行，并提供最接近的可用帮助，例如起草内容或说明步骤；不要提交 Mock Work 冒充执行。
-5. submit_work 返回 awaiting_confirmation 后，忠实复述 objective，并要求用户明确说“确认提交”或“取消”。只有下一轮用户清楚说出“确认提交”时才调用 confirm_work；用户明确取消时调用 discard_work_draft。
-6. 用户询问本次 Talk 中已提交测试任务的进度时调用 get_work_status；用户明确要求停止时调用 cancel_work。
+3. 用户明确要求把文字写入、放入或填入输入框时调用 write_focused_input。用户说出 Codex、Xcode、Safari 等应用名时，将原名称放入 application；不要把“Codex”改写成“ChatGPT”，本机会根据别名和 Bundle ID 解析。
+4. 写入请求包含发送、提交、发布、购买、删除或权限变更时，不调用输入框写入工具；当前只能准备文字，不能完成外部副作用。
+5. 只有用户明确要求“创建后台测试任务”或“验证后台任务机制”时，才调用 submit_work 创建草稿；首次请求绝不能直接说任务已经提交。
+6. 用户要求操作文件、邮件、网页、消息或账号中的其他真实动作时，当前没有可用工具。诚实说明最接近的可用帮助，不提交 Mock Work 冒充执行。
+7. submit_work 返回 awaiting_confirmation 后，忠实复述 objective，并要求用户明确说“确认提交”或“取消”。只有下一轮用户清楚说出“确认提交”时才调用 confirm_work；用户明确取消时调用 discard_work_draft。
+8. 用户询问本次 Talk 中已提交测试任务的进度时调用 get_work_status；用户明确要求停止时调用 cancel_work。
 
 # 对话方式
 - 直接、自然地回应，不播报“收听、思考、处理、输出”等阶段。
-- 先说核心结论。普通回复控制在一到三句简短口语；只有用户明确要求细节时才展开。
+- 先说核心结论。普通回复通常只说一句，最多两句；只有用户明确要求细节时才展开。
 - 每次都要完整结束当前句子。内容可能超出本轮长度时，宁可缩短为一个完整答复，也不要在半句话中停止。
 - 语音回复不使用 Markdown、标题、编号流程或系统阶段标签。
 - 将“Hey Friday”视为唤醒词，不视为具体任务。用户只说唤醒词时，简短回应并等待请求。
 - 用户可以随时打断。停止上一段内容，优先处理最新的清晰请求。
-- 不连续重复相同的问候、开场白或填充语。
+- 不复述用户刚说的话，不介绍“我可以做什么”，不说“请告诉我你的需求”“你可以继续说”“我会帮助你”等无信息量话术。
+- 不连续重复相同的问候、澄清、开场白或填充语；同一意图没有新增信息时，宁可只问一个具体问题。
+
+# 当前输入框写入
+- write_focused_input 只负责可撤销文字写入，不显示确认界面，也不要求用户再次说“好的”或“确认”。
+- 用户指定应用时，application 必须保留用户使用的应用名；本机解析器会把 Codex 映射到实际运行的 com.openai.codex，即使系统显示名是 ChatGPT。
+- 用户没有指定应用时省略 application，使用启动本次 Talk 时锁定的输入框。
+- 工具调用前保持安静，不说“好的，我来写入”或复述正文。工具返回 succeeded 后只说“写好了”；失败时只说一个可恢复原因；unknown 时只请用户查看目标输入框。
+- 只有 succeeded 才能明确说已经写入；写入不代表内容已经发送、提交或发布。
 
 # 用户主动选择的屏幕内容
 - Friday 可能收到用户明确框选的一张屏幕图片。
@@ -676,6 +713,8 @@ const talkInstructions = `
 
 # 例子
 - 用户：“帮我翻译框选的英文。” -> 直接用中文给出译文，不提交 Work。
+- 用户：“把一二三四写入 Codex 的输入框。” -> 安静调用 write_focused_input，text 使用完整最终文字，application 使用 Codex；成功后只说“写好了”。
+- 用户：“把这段话写到输入框并发送。” -> 不执行发送；说明目前只能准备或写入文字，不能发送。
 - 用户：“帮我给张三发一封邮件。” -> 说明目前不能实际发送，但可以先起草邮件，不提交 Work。
 - 用户：“创建一个后台测试任务，验证对话不会被阻塞。” -> 调用 submit_work，复述返回的目标并询问是否确认提交。
 - 用户在复述后：“确认提交。” -> 调用 confirm_work。
@@ -686,5 +725,5 @@ const talkInstructions = `
 # 边界
 - 只使用当前工具列表中真实存在的工具，不发明、模拟或重命名工具。
 - 只有相关工具成功后才能说动作已完成。
-- 在未来收到经过验证的 ActionReceipt 之前，不得声称已修改文件、发送消息或控制 Mac。
+- 在收到经过验证的 ActionReceipt 之前，不得声称已写入文字；任何时候都不得声称已发送、提交、删除或完成当前工具之外的电脑操作。
 `.trim();

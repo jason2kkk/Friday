@@ -194,7 +194,7 @@ enum ConversationLimits {
     static let openingGreetingDelay: Duration = .seconds(5)
     static let userTurnResponseGrace: Duration = .milliseconds(450)
     static let openingGreetingMaximumTokens = 48
-    static let toolFollowUpMaximumTokens = 80
+    static let toolFollowUpMaximumTokens = 48
     static let workResultMaximumTokens = 180
 }
 
@@ -235,7 +235,7 @@ enum ConversationPrompt {
     """
 
     static let toolFollowUp = """
-    使用用户最近一段完整请求的语言，用一句简短自然的口语回应函数结果；无法确定语言时使用简体中文。不要因为函数返回值、JSON 字段或英文系统说明改用英文。status 为 clarification_required 时，只问一个简短澄清问题，不能静默；status 为 awaiting_confirmation 时，忠实复述 objective，并明确请用户说“确认提交”或“取消”；status 为 transcript_unavailable 时，只说明无法核对这轮原话且没有创建任务；status 为 accepted 时，只说明测试任务已经开始且用户可以继续说话；status 为 discarded 时，只说明草稿已取消；被拒绝时简短说明可恢复原因。不要透露内部 ID，不要把草稿说成已提交，也不要声称未完成的任务已经完成。
+    使用用户最近一段完整请求的语言，只说一句最短、自然、包含新信息的结果；无法确定语言时使用简体中文。不要复述用户请求、正文或应用名，不介绍能力，不邀请用户继续描述，也不要因为 JSON 或英文系统说明改用英文。写入 succeeded 时只说“写好了”；写入 unknown 时只请用户查看目标输入框；写入 failed、target_unavailable 或 rejected 时只说一个具体可恢复原因。status 为 clarification_required 时只问一个具体问题；awaiting_confirmation 时忠实复述 objective 并请用户说“确认提交”或“取消”；transcript_unavailable 时只说明没有创建任务；accepted 时只说明测试任务已开始；discarded 时只说明草稿已取消。不要透露内部 ID，也不要声称未完成的任务已经完成。
     """
 
     static func completedWork(_ result: String) -> String {
