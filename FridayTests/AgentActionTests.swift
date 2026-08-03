@@ -1,13 +1,92 @@
 // 功能：验证语音 Agent 的明确输入框写入请求会自动执行，同时保持目标、幂等和 Talk 并发边界。
-// 职责：覆盖自动写入、重复工具调用、单动作串行、无目标、目标 revision 失效、未知回执和对话结果回传。
-// 边界：不连接 Realtime、不请求 Accessibility 权限、不操作真实输入框，也不记录或发送用户正文。
+// 职责：覆盖自动写入、重复工具调用、单动作串行、无目标、目标 revision 失效、未知回执和对话结果回传，并提供显式启用的真实 TextEdit 写入探针。
+// 边界：默认测试不连接 Realtime、不请求系统权限或操作真实输入框；真机探针只使用临时非敏感文本，且不记录或发送用户正文。
 
+import AppKit
 import ApplicationServices
 import XCTest
 @testable import Friday
 
 @MainActor
 final class AgentActionTests: XCTestCase {
+    func testRealTextEditAutomaticWriteAndSystemUndo() async throws {
+        guard ProcessInfo.processInfo.environment["FRIDAY_TEST_REAL_FOCUSED_INPUT"] == "1" else {
+            throw XCTSkip("Set FRIDAY_TEST_REAL_FOCUSED_INPUT=1 to run the real TextEdit probe.")
+        }
+
+        let inputService = AccessibilityInputService()
+        guard inputService.isTrusted else {
+            XCTFail("Friday 测试宿主没有辅助功能权限，无法执行真实输入框探针。")
+            return
+        }
+
+        let baseline = "FRIDAY_REAL_INPUT_BASELINE"
+        let insertedText = "_AUTOMATIC_WRITE_PROBE"
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FridayAgentProbe-\(UUID().uuidString)", isDirectory: true)
+        let documentURL = temporaryDirectory.appendingPathComponent("FridayAgentProbe.txt")
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: true
+        )
+        try baseline.write(to: documentURL, atomically: true, encoding: .utf8)
+
+        var targetElementToClose: AXUIElement?
+        defer {
+            if let targetElementToClose {
+                _ = closeDocumentWindow(containing: targetElementToClose)
+            }
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        let textEdit = try await openInTextEdit(documentURL)
+        textEdit.activate(options: [.activateAllWindows])
+
+        let target = try await waitForTextEditTarget(
+            processIdentifier: textEdit.processIdentifier,
+            expectedValue: baseline,
+            using: inputService
+        )
+        targetElementToClose = target.element
+        setInsertionPointAtEnd(of: target.element)
+
+        let executor = FocusedInputActionExecutor(inputService: inputService)
+        executor.lockSessionTarget(target)
+        let bridge = ConversationActionBridge(executor: executor)
+        bridge.beginConversationSession()
+        var observedReceipt: ActionReceipt?
+        bridge.onResolution = { _, receipt in
+            observedReceipt = receipt
+        }
+        let call = writeCall(
+            id: "call-real-textedit-write",
+            text: insertedText
+        )
+
+        let first = await bridge.resolve(call)
+        XCTAssertTrue(first.output.contains(#""status":"succeeded""#), first.output)
+        XCTAssertEqual(observedReceipt?.status, .succeeded)
+
+        let writtenValue = try await waitForElementValue(
+            baseline + insertedText,
+            in: target.element
+        )
+        XCTAssertEqual(writtenValue, baseline + insertedText)
+
+        let duplicate = await bridge.resolve(call)
+        XCTAssertEqual(duplicate.output, first.output)
+        XCTAssertEqual(stringValue(of: target.element), baseline + insertedText)
+
+        XCTAssertTrue(postCommandShortcut(keyCode: 0x06)) // Command-Z
+        let restoredValue = try await waitForElementValue(
+            baseline,
+            in: target.element
+        )
+        XCTAssertEqual(restoredValue, baseline)
+        XCTAssertTrue(closeDocumentWindow(containing: target.element))
+        targetElementToClose = nil
+    }
+
     func testBridgeAutomaticallyExecutesAndDeduplicatesCompletedCall() async {
         let executor = StubLocalActionExecutor(status: .succeeded)
         let bridge = ConversationActionBridge(executor: executor)
@@ -257,6 +336,168 @@ final class AgentActionTests: XCTestCase {
         for _ in 0..<200 {
             if condition() { return }
             try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    private func openInTextEdit(_ documentURL: URL) async throws -> NSRunningApplication {
+        let textEditURL = URL(fileURLWithPath: "/System/Applications/TextEdit.app")
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.addsToRecentItems = false
+
+        return try await withCheckedThrowingContinuation { continuation in
+            NSWorkspace.shared.open(
+                [documentURL],
+                withApplicationAt: textEditURL,
+                configuration: configuration
+            ) { application, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let application {
+                    continuation.resume(returning: application)
+                } else {
+                    continuation.resume(throwing: RealInputProbeError.textEditDidNotOpen)
+                }
+            }
+        }
+    }
+
+    private func waitForTextEditTarget(
+        processIdentifier: pid_t,
+        expectedValue: String,
+        using inputService: AccessibilityInputService
+    ) async throws -> FocusedInputTarget {
+        var lastResult: InputTargetResult = .noFocusedElement
+        for _ in 0..<80 {
+            lastResult = inputService.captureFocusedTarget(promptIfNeeded: false)
+            if case .target(let target) = lastResult,
+               target.processIdentifier == processIdentifier,
+               stringValue(of: target.element) == expectedValue {
+                return target
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw RealInputProbeError.targetUnavailable(describe(lastResult))
+    }
+
+    private func setInsertionPointAtEnd(of element: AXUIElement) {
+        guard let value = stringValue(of: element) else { return }
+        var range = CFRange(location: value.utf16.count, length: 0)
+        guard let rangeValue = AXValueCreate(.cfRange, &range) else { return }
+        AXUIElementSetAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            rangeValue
+        )
+    }
+
+    private func waitForElementValue(
+        _ expectedValue: String,
+        in element: AXUIElement
+    ) async throws -> String {
+        for _ in 0..<80 {
+            if let value = stringValue(of: element), value == expectedValue {
+                return value
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw RealInputProbeError.unexpectedValue(stringValue(of: element))
+    }
+
+    private func stringValue(of element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXValueAttribute as CFString,
+            &value
+        ) == .success else {
+            return nil
+        }
+        return value as? String
+    }
+
+    private func postCommandShortcut(keyCode: CGKeyCode) -> Bool {
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let keyDown = CGEvent(
+                keyboardEventSource: source,
+                virtualKey: keyCode,
+                keyDown: true
+              ),
+              let keyUp = CGEvent(
+                keyboardEventSource: source,
+                virtualKey: keyCode,
+                keyDown: false
+              ) else {
+            return false
+        }
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+        return true
+    }
+
+    private func closeDocumentWindow(containing element: AXUIElement) -> Bool {
+        guard let window = elementAttribute(kAXWindowAttribute, from: element),
+              let closeButton = elementAttribute(kAXCloseButtonAttribute, from: window) else {
+            return false
+        }
+        return AXUIElementPerformAction(
+            closeButton,
+            kAXPressAction as CFString
+        ) == .success
+    }
+
+    private func elementAttribute(
+        _ attribute: String,
+        from element: AXUIElement
+    ) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            attribute as CFString,
+            &value
+        ) == .success,
+        let value,
+        CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return unsafeBitCast(value, to: AXUIElement.self)
+    }
+
+    private func describe(_ result: InputTargetResult) -> String {
+        switch result {
+        case .target(let target):
+            return "target(\(target.applicationName), \(target.role))"
+        case .accessibilityDenied:
+            return "accessibilityDenied"
+        case .fridayFocused:
+            return "fridayFocused"
+        case .noFocusedElement:
+            return "noFocusedElement"
+        case .secureInput:
+            return "secureInput"
+        case .notEditable:
+            return "notEditable"
+        case .systemError(let error):
+            return "systemError(\(error.rawValue))"
+        }
+    }
+}
+
+private enum RealInputProbeError: LocalizedError {
+    case textEditDidNotOpen
+    case targetUnavailable(String)
+    case unexpectedValue(String?)
+
+    var errorDescription: String? {
+        switch self {
+        case .textEditDidNotOpen:
+            return "TextEdit 没有返回可用的运行实例。"
+        case .targetUnavailable(let result):
+            return "无法锁定真实 TextEdit 输入目标，最后结果：\(result)"
+        case .unexpectedValue(let value):
+            return "TextEdit 内容未在期限内达到预期，当前值：\(value ?? "<unavailable>")"
         }
     }
 }
