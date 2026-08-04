@@ -1,5 +1,5 @@
-// 功能：通过不抢焦点的顶部灵动岛持续展示 Dictate 与 Talk 的即时状态、轻提示和结果恢复反馈。
-// 职责：定义浮层状态模型、原生玻璃窗口层级、NSPanel 生命周期与 SwiftUI 内容，并把空闲态点击转交给主工作台。
+// 功能：通过不抢焦点的顶部灵动岛持续展示 Dictate 与 Talk 的录音、处理、结果和恢复反馈。
+// 职责：定义浮层状态模型、原生玻璃窗口层级、NSPanel 生命周期与 SwiftUI 内容，并处理展开收起和用户事件。
 // 边界：不采集音频、不调用模型、不查找输入目标；所有业务操作均通过模型回调交还应用工作流。
 
 import AppKit
@@ -28,15 +28,21 @@ enum InputOverlayPhase: Equatable {
     }
 }
 
+enum InputOverlayExpandedPage: Equatable {
+    case dashboard
+    case settings
+}
+
 /// 功能：根据当前屏幕的刘海和菜单栏计算灵动岛尺寸。
-/// 职责：让紧凑态内容只使用刘海两侧的安全区域，并为轻量反馈形态提供固定目标尺寸。
+/// 职责：让紧凑态内容只使用刘海两侧的安全区域，并为主页与设置形态提供固定目标尺寸。
 struct InputOverlaySizing {
-    static let feedbackSize = NSSize(width: 420, height: 220)
+    static let expandedSize = NSSize(width: 520, height: 300)
+    static let settingsSize = NSSize(width: 400, height: 480)
     static let compactWingWidth: CGFloat = 52
     static let shadowPadding: CGFloat = 10
     static let windowSize = NSSize(
-        width: feedbackSize.width,
-        height: feedbackSize.height + shadowPadding
+        width: max(expandedSize.width, settingsSize.width),
+        height: max(expandedSize.height, settingsSize.height) + shadowPadding
     )
 
     let compactSize: CGSize
@@ -92,9 +98,12 @@ final class InputOverlayModel: ObservableObject {
     @Published var centerGapWidth: CGFloat = 160
     @Published var isAppearing = false
     @Published var isCollapsing = false
+    @Published var isDashboardExpanded = false
+    @Published var expandedPage: InputOverlayExpandedPage = .dashboard
     @Published var dashboard = AppDashboardSnapshot()
 
     var isExpanded: Bool {
+        if isDashboardExpanded { return true }
         switch phase {
         case .failure, .result, .notice:
             return true
@@ -108,8 +117,17 @@ final class InputOverlayModel: ObservableObject {
         return false
     }
 
+    var currentExpandedSize: CGSize {
+        switch expandedPage {
+        case .dashboard:
+            return InputOverlaySizing.expandedSize
+        case .settings:
+            return InputOverlaySizing.settingsSize
+        }
+    }
+
     var currentSize: CGSize {
-        isExpanded ? InputOverlaySizing.feedbackSize : compactSize
+        isExpanded ? currentExpandedSize : compactSize
     }
 
     var onRetry: (() -> Void)?
@@ -124,8 +142,9 @@ final class InputOverlayModel: ObservableObject {
     var onClearLastOutput: (() -> Void)?
     var onRefresh: (() -> Void)?
     var onQuit: (() -> Void)?
-    var onOpenWorkspace: (() -> Void)?
-    var onCollapseFeedback: (() -> Void)?
+    var onCollapseDashboard: (() -> Void)?
+    var onPresentSettings: (() -> Void)?
+    var onPresentDashboard: (() -> Void)?
 }
 
 private final class InputOverlayPanel: NSPanel {
@@ -138,7 +157,7 @@ private final class InputOverlayRootView: NSView {
     private static let glassCornerRadius: CGFloat = 28
     private let backdropView: NSView
     private var compactSize = CGSize(width: 264, height: 32)
-    private var expandedSize = InputOverlaySizing.feedbackSize
+    private var expandedSize = InputOverlaySizing.expandedSize
     private var isExpanded = false
     private var isTransitioning = false
     private var transitionGeneration = 0
@@ -304,8 +323,14 @@ final class InputOverlayController {
         panel.isExcludedFromWindowsMenu = true
         panel.animationBehavior = .utilityWindow
 
-        model.onCollapseFeedback = { [weak self] in
-            self?.collapseFeedback()
+        model.onCollapseDashboard = { [weak self] in
+            self?.collapseDashboard()
+        }
+        model.onPresentSettings = { [weak self] in
+            self?.presentExpandedPage(.settings)
+        }
+        model.onPresentDashboard = { [weak self] in
+            self?.presentExpandedPage(.dashboard)
         }
         installEventMonitors()
         screenObserver = NotificationCenter.default.addObserver(
@@ -355,6 +380,16 @@ final class InputOverlayController {
         model.isAppearing = shouldAnimateAppearance
         model.isCollapsing = false
         model.phase = phase
+        switch phase {
+        case .failure, .result, .notice:
+            model.expandedPage = .dashboard
+            model.isDashboardExpanded = true
+        case .idle, .hidden:
+            break
+        default:
+            model.expandedPage = .dashboard
+            model.isDashboardExpanded = false
+        }
         panel.hasShadow = model.isExpanded
         panel.invalidateShadow()
         panel.ignoresMouseEvents = !model.isExpanded
@@ -368,7 +403,7 @@ final class InputOverlayController {
         model.centerGapWidth = sizing.centerGapWidth
         rootView.setExpanded(
             model.isExpanded,
-            expandedSize: InputOverlaySizing.feedbackSize,
+            expandedSize: model.currentExpandedSize,
             compactSize: sizing.compactSize,
             animated: panel.isVisible
         )
@@ -411,12 +446,14 @@ final class InputOverlayController {
             return
         }
 
+        model.isDashboardExpanded = false
         rootView.setExpanded(
             false,
-            expandedSize: InputOverlaySizing.feedbackSize,
+            expandedSize: model.currentExpandedSize,
             compactSize: model.compactSize,
             animated: true
         )
+        model.expandedPage = .dashboard
         model.isCollapsing = true
         dismissalTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(180))
@@ -454,9 +491,10 @@ final class InputOverlayController {
         model.waveformLevels = InputOverlayModel.silentWaveformLevels
         model.isAppearing = false
         model.isCollapsing = false
+        model.expandedPage = .dashboard
         rootView.setExpanded(
             false,
-            expandedSize: InputOverlaySizing.feedbackSize,
+            expandedSize: model.currentExpandedSize,
             compactSize: model.compactSize,
             animated: false
         )
@@ -467,7 +505,24 @@ final class InputOverlayController {
         panel.orderFrontRegardless()
     }
 
-    private func collapseFeedback() {
+    private func expandDashboard() {
+        guard panel.isVisible, !model.isExpanded else { return }
+        model.expandedPage = .dashboard
+        model.isDashboardExpanded = true
+        rootView.setExpanded(
+            true,
+            expandedSize: model.currentExpandedSize,
+            compactSize: model.compactSize,
+            animated: true
+        )
+        panel.hasShadow = true
+        panel.invalidateShadow()
+        panel.ignoresMouseEvents = false
+        panel.makeKeyAndOrderFront(nil)
+        model.onRefresh?()
+    }
+
+    private func collapseDashboard() {
         guard model.isExpanded else { return }
         noticeTask?.cancel()
         noticeTask = nil
@@ -478,16 +533,29 @@ final class InputOverlayController {
         } else if case .notice = model.phase {
             model.phase = .idle
         }
+        model.isDashboardExpanded = false
         rootView.setExpanded(
             false,
-            expandedSize: InputOverlaySizing.feedbackSize,
+            expandedSize: model.currentExpandedSize,
             compactSize: model.compactSize,
             animated: true
         )
+        model.expandedPage = .dashboard
         panel.hasShadow = false
         panel.invalidateShadow()
         panel.resignKey()
         panel.ignoresMouseEvents = true
+    }
+
+    private func presentExpandedPage(_ page: InputOverlayExpandedPage) {
+        guard model.isExpanded, model.expandedPage != page else { return }
+        model.expandedPage = page
+        rootView.setExpanded(
+            true,
+            expandedSize: model.currentExpandedSize,
+            compactSize: model.compactSize,
+            animated: true
+        )
     }
 
     private func installEventMonitors() {
@@ -501,10 +569,7 @@ final class InputOverlayController {
         localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53,
                   let self,
-                  self.panel.isVisible,
-                  self.model.isExpanded || (
-                    self.model.phase != .idle && self.model.phase != .hidden
-                  ) else { return event }
+                  self.panel.isVisible else { return event }
             self.handleEscape()
             return nil
         }
@@ -523,7 +588,7 @@ final class InputOverlayController {
         ) { [weak self] event in
             guard let self, model.isExpanded else { return event }
             if !expandedFrameInScreen.contains(NSEvent.mouseLocation) {
-                collapseFeedback()
+                collapseDashboard()
             }
             return event
         }
@@ -532,7 +597,7 @@ final class InputOverlayController {
     private func handleEscape() {
         guard panel.isVisible else { return }
         if model.isExpanded {
-            collapseFeedback()
+            collapseDashboard()
         } else if model.phase != .idle && model.phase != .hidden {
             model.onDismiss?()
         }
@@ -542,10 +607,10 @@ final class InputOverlayController {
         guard panel.isVisible else { return }
         if model.isExpanded {
             if !expandedFrameInScreen.contains(location) {
-                collapseFeedback()
+                collapseDashboard()
             }
-        } else if model.phase == .idle, compactFrameInScreen.contains(location) {
-            model.onOpenWorkspace?()
+        } else if compactFrameInScreen.contains(location) {
+            expandDashboard()
         }
     }
 
@@ -572,7 +637,7 @@ final class InputOverlayController {
     }
 
     private var expandedFrameInScreen: NSRect {
-        visibleFrameInScreen(size: InputOverlaySizing.feedbackSize)
+        visibleFrameInScreen(size: model.currentExpandedSize)
     }
 
     private func visibleFrameInScreen(size: CGSize) -> NSRect {
@@ -593,7 +658,7 @@ final class InputOverlayController {
         model.centerGapWidth = sizing.centerGapWidth
         rootView.setExpanded(
             model.isExpanded,
-            expandedSize: InputOverlaySizing.feedbackSize,
+            expandedSize: model.currentExpandedSize,
             compactSize: sizing.compactSize,
             animated: false
         )
@@ -612,7 +677,10 @@ final class InputOverlayController {
         switch preview.lowercased() {
         case "dashboard":
             show(.idle)
-            model.onOpenWorkspace?()
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                self?.expandDashboard()
+            }
         case "listening-idle":
             model.audioLevel = 0.12
             model.isVoiceActive = false
@@ -717,6 +785,10 @@ private struct InputOverlayView: View {
                 .easeInOut(duration: model.isExpanded ? 0.36 : 0.3),
                 value: model.isExpanded
             )
+            .animation(
+                .easeInOut(duration: 0.36),
+                value: model.expandedPage
+            )
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
@@ -738,7 +810,7 @@ private struct InputOverlayView: View {
     }
 
     private var expandedContent: some View {
-        IslandFeedbackView(model: model)
+        IslandDashboardView(model: model)
     }
 
     private var idleContent: some View {

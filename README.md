@@ -37,7 +37,7 @@ application or use the explicit proxy command documented in
 [`Backend/README.md`](Backend/README.md). The service now reports network and
 proxy failures without exposing the API key.
 
-The service listens on `http://127.0.0.1:8787`. Open Friday and its native workspace appears while the compact dynamic island stays at the top of the current display. Close the workspace to keep Friday, its Dock icon, and global shortcuts running; click the Dock icon or idle island to reopen it. Focus an input in another app and tap `Fn` to start and finish one recording.
+The service listens on `http://127.0.0.1:8787`. Open Friday and its native workspace appears while the compact dynamic island stays at the top of the current display. Close the workspace to keep Friday, its Dock icon, and global shortcuts running; click the Dock icon to reopen the workspace, or click the idle island to expand its historical dashboard. Focus an input in another app and tap `Fn` to start and finish one recording.
 
 Friday does not listen to the microphone while idle. Tap and release `Fn` by itself for Dictate, or `Control + Option` to start or end the voice Agent entry, currently backed by the speech-to-speech Talk runtime. A modifier-only chord is ignored if another modifier or a regular key is pressed before release, so existing shortcuts continue to work. The dormant wake-word implementation remains behind `WakeWordProviding` for a future opt-in mode, but it is not started by the current product path.
 
@@ -71,9 +71,9 @@ optional provider contract and is not allowed to replace Dictate's
 
 - SwiftUI macOS app target
 - Regular Dock application with a native `NavigationSplitView` workspace and floating rounded Liquid Glass sidebar for overview, runtime monitoring, permissions, recovery, and settings
-- Closing the workspace does not terminate Friday or unregister global shortcuts; the Dock icon and idle dynamic island both reopen the retained window
+- Closing the workspace does not terminate Friday or unregister global shortcuts; the Dock icon reopens the retained window, while clicking the idle dynamic island restores its historical expanded dashboard
 - White native Liquid Glass on macOS 26, with `NSVisualEffectView` material fallback on macOS 14 and 15
-- Persistent compact dynamic island limited to immediate Dictate/Talk state, lightweight notices, failures, result recovery, and opening the workspace
+- Persistent compact dynamic island with the historical click-to-expand dashboard and settings, plus immediate Dictate/Talk state, notices, failures, and result recovery
 - No microphone capture, Speech recognition task, Realtime credential, or model session while Friday is idle
 - Separate modifier-only `Fn` Dictate and `Control + Option` voice Agent shortcuts
 - Talk-only `Control + Command` screen-region selection with a transparent overlay, pointer-adjacent drag guide, `Esc` cancellation, multi-display support, and no response until the user continues speaking

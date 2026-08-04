@@ -50,7 +50,7 @@
 		B10000000000000000000002 /* RunningApplicationResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* RunningApplicationResolver.swift */; };
 		B10000000000000000000003 /* FocusedInputActionExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* FocusedInputActionExecutor.swift */; };
 		B10000000000000000000004 /* AgentActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* AgentActionTests.swift */; };
-		C10000000000000000000001 /* IslandFeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* IslandFeedbackView.swift */; };
+		C10000000000000000000001 /* IslandDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* IslandDashboardView.swift */; };
 		C10000000000000000000002 /* AppWorkspaceWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* AppWorkspaceWindowController.swift */; };
 		C10000000000000000000003 /* AppDashboardSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000003 /* AppDashboardSnapshot.swift */; };
 /* End PBXBuildFile section */
@@ -112,7 +112,7 @@
 		B20000000000000000000002 /* RunningApplicationResolver.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RunningApplicationResolver.swift; sourceTree = "<group>"; };
 		B20000000000000000000003 /* FocusedInputActionExecutor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = FocusedInputActionExecutor.swift; sourceTree = "<group>"; };
 		B20000000000000000000004 /* AgentActionTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AgentActionTests.swift; sourceTree = "<group>"; };
-		C20000000000000000000001 /* IslandFeedbackView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = IslandFeedbackView.swift; sourceTree = "<group>"; };
+		C20000000000000000000001 /* IslandDashboardView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = IslandDashboardView.swift; sourceTree = "<group>"; };
 		C20000000000000000000002 /* AppWorkspaceWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppWorkspaceWindowController.swift; sourceTree = "<group>"; };
 		C20000000000000000000003 /* AppDashboardSnapshot.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDashboardSnapshot.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -205,7 +205,7 @@
 			children = (
 				A20000000000000000000009 /* InputOverlay.swift */,
 				C20000000000000000000003 /* AppDashboardSnapshot.swift */,
-				C20000000000000000000001 /* IslandFeedbackView.swift */,
+				C20000000000000000000001 /* IslandDashboardView.swift */,
 				A20000000000000000000016 /* InputOverlayAtmosphere.swift */,
 				A20000000000000000000022 /* ConversationCoordinator.swift */,
 				A20000000000000000000040 /* ConversationCoordinatorDiagnostics.swift */,
@@ -393,7 +393,7 @@
 				A10000000000000000000006 /* DictationProvider.swift in Sources */,
 				A10000000000000000000007 /* InputOverlay.swift in Sources */,
 				C10000000000000000000003 /* AppDashboardSnapshot.swift in Sources */,
-				C10000000000000000000001 /* IslandFeedbackView.swift in Sources */,
+				C10000000000000000000001 /* IslandDashboardView.swift in Sources */,
 				C10000000000000000000002 /* AppWorkspaceWindowController.swift in Sources */,
 				A10000000000000000000008 /* DictationPrompt.swift in Sources */,
 				A10000000000000000000009 /* RealtimeDictationProvider.swift in Sources */,

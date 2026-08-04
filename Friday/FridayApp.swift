@@ -220,10 +220,6 @@ final class AppState: ObservableObject {
         overlayModel.onQuit = {
             NSApplication.shared.terminate(nil)
         }
-        overlayModel.onOpenWorkspace = { [weak self] in
-            self?.overlayModel.onCollapseFeedback?()
-            self?.workspaceWindowController?.show()
-        }
         microphoneService.onLevel = { [weak self] level in
             guard self?.workflowState.isRecording == true else { return }
             self?.overlayModel.audioLevel = level

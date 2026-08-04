@@ -598,19 +598,15 @@ final class DictationProviderTests: XCTestCase {
         XCTAssertEqual(InputOverlaySizing.compactWingWidth, 52)
     }
 
-    func testPersistentIslandUsesCompactAndFeedbackSizes() {
+    func testPersistentIslandUsesCompactAndExpandedDashboardSizes() {
         let model = InputOverlayModel()
 
         model.phase = .idle
         XCTAssertEqual(model.currentSize, model.compactSize)
 
         model.phase = .result(text: "结果", message: "请复制", canRetry: false)
-        XCTAssertEqual(model.currentSize, InputOverlaySizing.feedbackSize)
-
-        XCTAssertLessThan(
-            InputOverlaySizing.feedbackSize.width,
-            AppWorkspaceSizing.minimumSize.width
-        )
+        model.isDashboardExpanded = true
+        XCTAssertEqual(model.currentSize, InputOverlaySizing.expandedSize)
     }
 
     @MainActor
@@ -1713,11 +1709,12 @@ final class DictationProviderTests: XCTestCase {
         coordinator.stop()
     }
 
-    func testNoticeUsesTheLightweightIslandFeedbackPanel() {
+    func testNoticeUsesTheExpandedIslandInsteadOfASeparateToast() {
         let model = InputOverlayModel()
         model.phase = .notice("没有找到可用于播放 Friday 声音的设备。")
+        model.isDashboardExpanded = true
 
-        XCTAssertEqual(model.currentSize, InputOverlaySizing.feedbackSize)
+        XCTAssertEqual(model.currentSize, InputOverlaySizing.expandedSize)
     }
 
     func testConversationPhaseUsesCompactIslandWithoutDevelopmentSessionLimits() {
@@ -1817,14 +1814,20 @@ final class DictationProviderTests: XCTestCase {
         coordinator.stop()
     }
 
-    func testOverlayWindowLeavesStableShadowPaddingForFeedback() {
+    func testOverlayWindowLeavesStableShadowPaddingAcrossExpandedSurfaces() {
         XCTAssertEqual(
             InputOverlaySizing.windowSize.width,
-            InputOverlaySizing.feedbackSize.width
+            max(
+                InputOverlaySizing.expandedSize.width,
+                InputOverlaySizing.settingsSize.width
+            )
         )
         XCTAssertEqual(
             InputOverlaySizing.windowSize.height,
-            InputOverlaySizing.feedbackSize.height + InputOverlaySizing.shadowPadding
+            max(
+                InputOverlaySizing.expandedSize.height,
+                InputOverlaySizing.settingsSize.height
+            ) + InputOverlaySizing.shadowPadding
         )
     }
 
