@@ -142,6 +142,7 @@ final class InputOverlayModel: ObservableObject {
     var onClearLastOutput: (() -> Void)?
     var onRefresh: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onOpenWorkspace: (() -> Void)?
     var onCollapseDashboard: (() -> Void)?
     var onPresentSettings: (() -> Void)?
     var onPresentDashboard: (() -> Void)?

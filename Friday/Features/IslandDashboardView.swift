@@ -1,5 +1,5 @@
 // 功能：展示 Friday 灵动岛的主页与设置形态，让用户查看状态并执行所有常用操作。
-// 职责：根据 InputOverlayModel 呈现快捷操作、服务、权限、用量、最近结果和纵向设置菜单，并转发页面切换与业务命令。
+// 职责：根据 InputOverlayModel 呈现快捷操作、服务、权限、用量、最近结果和纵向设置菜单，并转发主工作台展开、页面切换与业务命令。
 // 边界：视图只负责展示和事件转发，不直接读取系统权限、访问网络、管理凭证或控制音频设备。
 
 import SwiftUI
@@ -73,6 +73,12 @@ struct IslandDashboardView: View {
 
             Spacer(minLength: 12)
 
+            headerButton(
+                assetName: "展开图标",
+                help: "在主工作台中打开",
+                accessibilityLabel: "在主工作台中打开 Friday",
+                action: { model.onOpenWorkspace?() }
+            )
             headerButton(
                 assetName: "设置图标",
                 rendersOriginal: true,

@@ -1,5 +1,5 @@
 // 功能：启动带 Dock 入口的 Friday macOS 应用，展示独立主工作台与常驻顶部灵动岛，并承载应用级 Dictate 和 Talk 工作流。
-// 职责：管理关窗后继续运行与 Dock 重开窗口的应用生命周期，创建 Runtime 依赖，并统一管理权限、快捷键、录音、目标写回、应用意图、本地 Action 及 Talk 协调器。
+// 职责：管理关窗后继续运行、Dock 重开及灵动岛展开按钮打开窗口的应用生命周期，创建 Runtime 依赖，并统一管理权限、快捷键、录音、目标写回、应用意图、本地 Action 及 Talk 协调器。
 // 边界：不保存长期 API Key 或用户音频；系统访问、音频、网络和浮层细节分别委托给 Platform、Provider 与 Feature 类型。
 
 import AppKit
@@ -219,6 +219,10 @@ final class AppState: ObservableObject {
         }
         overlayModel.onQuit = {
             NSApplication.shared.terminate(nil)
+        }
+        overlayModel.onOpenWorkspace = { [weak self] in
+            self?.overlayModel.onCollapseDashboard?()
+            self?.workspaceWindowController?.show()
         }
         microphoneService.onLevel = { [weak self] level in
             guard self?.workflowState.isRecording == true else { return }
