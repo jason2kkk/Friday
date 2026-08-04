@@ -1,16 +1,14 @@
 // 功能：提供 Friday 独立主工作台，让用户在原生浅色玻璃界面中集中查看状态、监控、权限、结果和设置。
-// 职责：使用 macOS NavigationSplitView 与 sidebar List 呈现概览、运行监控和设置，并把用户命令转发给应用级工作流。
+// 职责：在悬浮圆角 Liquid Glass 容器中使用 macOS sidebar List 呈现概览、运行监控和设置，并把用户命令转发给应用级工作流。
 // 边界：视图不直接读取系统权限、访问网络、管理凭证或控制音频设备，也不持久化用户内容。
 
 import SwiftUI
-
 private enum WorkspaceSection: String, CaseIterable, Identifiable {
     case overview = "概览"
     case monitoring = "运行监控"
     case settings = "设置"
 
     var id: Self { self }
-
     var symbol: String {
         switch self {
         case .overview: return "square.grid.2x2"
@@ -18,7 +16,6 @@ private enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .settings: return "gearshape"
         }
     }
-
     static var configuredPreview: WorkspaceSection {
         let preview = ProcessInfo.processInfo.environment["FRIDAY_WORKSPACE_PREVIEW"]?.lowercased()
         if preview?.hasPrefix("monitoring") == true { return .monitoring }
@@ -26,11 +23,9 @@ private enum WorkspaceSection: String, CaseIterable, Identifiable {
         return .overview
     }
 }
-
 struct ContentView: View {
     @ObservedObject var model: InputOverlayModel
     @State private var selectedSection = WorkspaceSection.configuredPreview
-
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -44,7 +39,6 @@ struct ContentView: View {
         .tint(.blue)
         .preferredColorScheme(.light)
     }
-
     private var sidebar: some View {
         VStack(spacing: 0) {
             brand
@@ -56,10 +50,20 @@ struct ContentView: View {
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
+            .padding(.horizontal, 8)
 
+            Divider()
+                .padding(.horizontal, 14)
             sidebarStatus
         }
-        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(
+            Color.white.opacity(0.2),
+            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+        )
+        .nativeGlassSurface(cornerRadius: 22)
+        .shadow(color: .black.opacity(0.09), radius: 14, y: 5)
+        .padding(12)
     }
 
     private var brand: some View {
@@ -101,9 +105,8 @@ struct ContentView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(12)
-        .nativeGlassSurface(cornerRadius: 12)
-        .padding(10)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 66)
     }
 
     private var detail: some View {

@@ -70,7 +70,7 @@ optional provider contract and is not allowed to replace Dictate's
 ## Current scope
 
 - SwiftUI macOS app target
-- Regular Dock application with a native `NavigationSplitView` workspace for overview, runtime monitoring, permissions, recovery, and settings
+- Regular Dock application with a native `NavigationSplitView` workspace and floating rounded Liquid Glass sidebar for overview, runtime monitoring, permissions, recovery, and settings
 - Closing the workspace does not terminate Friday or unregister global shortcuts; the Dock icon and idle dynamic island both reopen the retained window
 - White native Liquid Glass on macOS 26, with `NSVisualEffectView` material fallback on macOS 14 and 15
 - Persistent compact dynamic island limited to immediate Dictate/Talk state, lightweight notices, failures, result recovery, and opening the workspace
@@ -132,7 +132,7 @@ optional provider contract and is not allowed to replace Dictate's
 - Live model deltas remain hidden until the final text passes the local dictation-output guard; the last validated result remains available when insertion fails
 - Accessibility target locking with `Cmd+V` text insertion for native, Web, and Electron inputs
 - Pasteboard restoration when insertion does not detect a newer user copy
-- Simplified Chinese native workspace with a system sidebar, status, shortcuts, required permission actions, usage monitoring, and recent result
+- Simplified Chinese native workspace with a floating glass container around the system sidebar list, plus status, shortcuts, required permission actions, usage monitoring, and recent result
 - macOS 14.0 minimum deployment target
 - `FridayTests` target covering Mock behavior and Realtime event parsing
 - Repository quality gate at `scripts/verify.sh`, covering Node integration tests, plist/pbxproj checks, and signed Xcode tests without OpenAI calls
