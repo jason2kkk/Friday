@@ -70,7 +70,7 @@ optional provider contract and is not allowed to replace Dictate's
 ## Current scope
 
 - SwiftUI macOS app target
-- Regular Dock application with a native `NavigationSplitView` workspace and floating rounded Liquid Glass sidebar that extends behind the native traffic lights for overview, runtime monitoring, permissions, recovery, and settings
+- Regular Dock application with a native `NavigationSplitView` workspace and floating rounded Liquid Glass sidebar below the native titlebar traffic lights for overview, runtime monitoring, permissions, recovery, and settings
 - Closing the workspace does not terminate Friday or unregister global shortcuts; the Dock icon reopens the retained window, while clicking the idle dynamic island restores its historical expanded dashboard
 - White native Liquid Glass on macOS 26, with `NSVisualEffectView` material fallback on macOS 14 and 15
 - Persistent compact dynamic island with the historical click-to-expand dashboard and settings, plus immediate Dictate/Talk state, notices, failures, and result recovery
