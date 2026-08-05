@@ -70,7 +70,7 @@ optional provider contract and is not allowed to replace Dictate's
 ## Current scope
 
 - SwiftUI macOS app target
-- Regular Dock application with a native `NavigationSplitView` workspace and floating rounded Liquid Glass sidebar below the native titlebar traffic lights for overview, runtime monitoring, permissions, recovery, and settings
+- Regular Dock application with a native `NavigationSplitView` workspace, a full-height flat navigation sidebar, and a separate rounded white content canvas for Dictate, runtime monitoring, permissions, recovery, and settings
 - Closing the workspace does not terminate Friday or unregister global shortcuts; the Dock icon reopens the retained window, while clicking the idle dynamic island restores its historical expanded dashboard
 - White native Liquid Glass on macOS 26, with `NSVisualEffectView` material fallback on macOS 14 and 15
 - Persistent compact dynamic island with the historical click-to-expand dashboard and settings, plus immediate Dictate/Talk state, notices, failures, and result recovery
@@ -132,7 +132,7 @@ optional provider contract and is not allowed to replace Dictate's
 - Live model deltas remain hidden until the final text passes the local dictation-output guard; the last validated result remains available when insertion fails
 - Accessibility target locking with `Cmd+V` text insertion for native, Web, and Electron inputs
 - Pasteboard restoration when insertion does not detect a newer user copy
-- Simplified Chinese native workspace with a floating glass container around the system sidebar list, plus status, shortcuts, required permission actions, usage monitoring, and recent result
+- Simplified Chinese native workspace following the provided Flow reference: native traffic lights on the window chrome, an Iconsax waveform brand mark and flat left navigation, plus a rounded white canvas for status, shortcuts, required permission actions, usage monitoring, and the recent in-memory result
 - macOS 14.0 minimum deployment target
 - `FridayTests` target covering Mock behavior and Realtime event parsing
 - Repository quality gate at `scripts/verify.sh`, covering Node integration tests, plist/pbxproj checks, and signed Xcode tests without OpenAI calls
