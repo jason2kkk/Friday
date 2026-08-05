@@ -1,5 +1,5 @@
 // 功能：提供 Friday 独立主工作台，让用户在原生浅色玻璃界面中集中查看状态、监控、权限、结果和设置。
-// 职责：在悬浮圆角 Liquid Glass 容器中使用 macOS sidebar List 呈现概览、运行监控和设置，并把用户命令转发给应用级工作流。
+// 职责：让悬浮圆角 Liquid Glass 侧边栏延伸到原生交通灯下方，使用 macOS sidebar List 呈现概览、运行监控和设置，并把用户命令转发给应用级工作流。
 // 边界：视图不直接读取系统权限、访问网络、管理凭证或控制音频设备，也不持久化用户内容。
 
 import SwiftUI
@@ -23,6 +23,12 @@ private enum WorkspaceSection: String, CaseIterable, Identifiable {
         return .overview
     }
 }
+
+private enum WorkspaceLayout {
+    static let sidebarOuterPadding: CGFloat = 12
+    static let nativeTitlebarReserve: CGFloat = 40
+}
+
 struct ContentView: View {
     @ObservedObject var model: InputOverlayModel
     @State private var selectedSection = WorkspaceSection.configuredPreview
@@ -30,6 +36,7 @@ struct ContentView: View {
         NavigationSplitView {
             sidebar
                 .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 250)
+                .ignoresSafeArea(.container, edges: .top)
         } detail: {
             detail
         }
@@ -41,6 +48,10 @@ struct ContentView: View {
     }
     private var sidebar: some View {
         VStack(spacing: 0) {
+            Color.clear
+                .frame(height: WorkspaceLayout.nativeTitlebarReserve)
+                .accessibilityHidden(true)
+
             brand
 
             List(WorkspaceSection.allCases, selection: $selectedSection) { section in
@@ -63,7 +74,7 @@ struct ContentView: View {
         )
         .nativeGlassSurface(cornerRadius: 22)
         .shadow(color: .black.opacity(0.09), radius: 14, y: 5)
-        .padding(12)
+        .padding(WorkspaceLayout.sidebarOuterPadding)
     }
 
     private var brand: some View {
