@@ -6,6 +6,7 @@ import SwiftUI
 
 private enum WorkspaceSection: String, CaseIterable, Identifiable {
     case overview = "转写"
+    case agent = "Agent"
     case monitoring = "运行监控"
     case settings = "设置"
 
@@ -14,6 +15,7 @@ private enum WorkspaceSection: String, CaseIterable, Identifiable {
     var iconAsset: String {
         switch self {
         case .overview: return "麦克风图标"
+        case .agent: return "处理器图标"
         case .monitoring: return "处理器图标"
         case .settings: return "设置图标"
         }
@@ -21,6 +23,7 @@ private enum WorkspaceSection: String, CaseIterable, Identifiable {
 
     static var configuredPreview: WorkspaceSection {
         let preview = ProcessInfo.processInfo.environment["FRIDAY_WORKSPACE_PREVIEW"]?.lowercased()
+        if preview?.hasPrefix("agent") == true { return .agent }
         if preview?.hasPrefix("monitoring") == true { return .monitoring }
         if preview?.hasPrefix("settings") == true { return .settings }
         return .overview
@@ -77,6 +80,7 @@ struct AppDashboardView: View {
 
             VStack(spacing: 4) {
                 navigationRow(.overview)
+                navigationRow(.agent)
                 navigationRow(.monitoring)
             }
 
@@ -101,7 +105,7 @@ struct AppDashboardView: View {
             )
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("Olli")
+                OlliBrandText("Olli", brandSize: 20)
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(WorkspacePalette.ink)
                 Text("Mac AI 助手")
@@ -149,7 +153,7 @@ struct AppDashboardView: View {
                     .fill(statusColor)
                     .frame(width: 7, height: 7)
                     .shadow(color: statusColor.opacity(0.42), radius: 4)
-                Text(model.dashboard.serviceLabel)
+                OlliBrandText(model.dashboard.serviceLabel, brandSize: 11)
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(2)
                 Spacer(minLength: 0)
@@ -194,6 +198,8 @@ struct AppDashboardView: View {
             switch selectedSection {
             case .overview:
                 overviewPage
+            case .agent:
+                computerUseTaskPage
             case .monitoring:
                 monitoringPage
             case .settings:
@@ -287,12 +293,12 @@ struct AppDashboardView: View {
 
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(model.dashboard.status)
+                    OlliBrandText(model.dashboard.status, brandSize: 19)
                         .font(.system(size: 19, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
 
-                    Text(currentStatusDetail)
+                    OlliBrandText(currentStatusDetail, brandSize: 11)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.68))
                         .lineLimit(3)
@@ -342,7 +348,7 @@ struct AppDashboardView: View {
                     size: 15,
                     color: isPrimary ? WorkspacePalette.ink : .white
                 )
-                Text(title)
+                OlliBrandText(title, brandSize: 10)
                     .font(.system(size: 10, weight: .semibold))
                     .lineLimit(1)
             }
@@ -480,7 +486,7 @@ struct AppDashboardView: View {
                     .foregroundStyle(WorkspacePalette.muted)
                     .frame(width: 42, alignment: .leading)
 
-                Text(output)
+                OlliBrandText(output, brandSize: 12)
                     .font(.system(size: 12))
                     .foregroundStyle(WorkspacePalette.ink)
                     .lineLimit(3)
@@ -521,7 +527,7 @@ struct AppDashboardView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("本地语音服务")
                     .font(.system(size: 11, weight: .semibold))
-                Text(model.dashboard.serviceLabel)
+                OlliBrandText(model.dashboard.serviceLabel, brandSize: 9)
                     .font(.system(size: 9))
                     .foregroundStyle(WorkspacePalette.muted)
                     .lineLimit(1)
@@ -538,7 +544,7 @@ struct AppDashboardView: View {
     private func attentionActivityRow(_ item: AttentionItem) -> some View {
         HStack(spacing: 12) {
             templateIcon(item.iconAsset, size: 18, color: .orange)
-            Text(item.title)
+            OlliBrandText(item.title, brandSize: 11)
                 .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
             Spacer(minLength: 12)

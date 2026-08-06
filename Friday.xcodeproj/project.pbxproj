@@ -66,6 +66,14 @@
 		F10000000000000000000001 /* Olli.icon in Resources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000001 /* Olli.icon */; };
 		G10000000000000000000001 /* AppDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = G20000000000000000000001 /* AppDashboardView.swift */; };
 		G10000000000000000000002 /* AppWorkspaceWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = G20000000000000000000002 /* AppWorkspaceWindowController.swift */; };
+		J10000000000000000000001 /* ComputerUseRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = J20000000000000000000001 /* ComputerUseRuntime.swift */; };
+		J10000000000000000000002 /* NativeComputerUseRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = J20000000000000000000002 /* NativeComputerUseRuntime.swift */; };
+		J10000000000000000000003 /* ComputerUseTaskView.swift in Sources */ = {isa = PBXBuildFile; fileRef = J20000000000000000000003 /* ComputerUseTaskView.swift */; };
+		J10000000000000000000004 /* ComputerUseRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = J20000000000000000000004 /* ComputerUseRuntimeTests.swift */; };
+		K10000000000000000000001 /* OlliBrandTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = K20000000000000000000001 /* OlliBrandTypography.swift */; };
+		K10000000000000000000002 /* Mali-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = K20000000000000000000002 /* Mali-Bold.ttf */; };
+		K10000000000000000000003 /* Mali-BoldItalic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = K20000000000000000000003 /* Mali-BoldItalic.ttf */; };
+		K10000000000000000000004 /* Mali-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = K20000000000000000000004 /* Mali-OFL.txt */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -141,6 +149,14 @@
 		F20000000000000000000001 /* Olli.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Olli.icon; sourceTree = "<group>"; };
 		G20000000000000000000001 /* AppDashboardView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDashboardView.swift; sourceTree = "<group>"; };
 		G20000000000000000000002 /* AppWorkspaceWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppWorkspaceWindowController.swift; sourceTree = "<group>"; };
+		J20000000000000000000001 /* ComputerUseRuntime.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ComputerUseRuntime.swift; sourceTree = "<group>"; };
+		J20000000000000000000002 /* NativeComputerUseRuntime.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NativeComputerUseRuntime.swift; sourceTree = "<group>"; };
+		J20000000000000000000003 /* ComputerUseTaskView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ComputerUseTaskView.swift; sourceTree = "<group>"; };
+		J20000000000000000000004 /* ComputerUseRuntimeTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ComputerUseRuntimeTests.swift; sourceTree = "<group>"; };
+		K20000000000000000000001 /* OlliBrandTypography.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OlliBrandTypography.swift; sourceTree = "<group>"; };
+		K20000000000000000000002 /* Mali-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Mali-Bold.ttf"; sourceTree = "<group>"; };
+		K20000000000000000000003 /* Mali-BoldItalic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Mali-BoldItalic.ttf"; sourceTree = "<group>"; };
+		K20000000000000000000004 /* Mali-OFL.txt */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = "Mali-OFL.txt"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -179,6 +195,7 @@
 				A20000000000000000000032 /* Assets.xcassets */,
 				H40000000000000000000001 /* App图标 */,
 				D40000000000000000000001 /* Resources */,
+				K40000000000000000000001 /* Shared */,
 				A40000000000000000000005 /* Core */,
 				A40000000000000000000008 /* Runtime */,
 				A40000000000000000000011 /* Providers */,
@@ -202,6 +219,7 @@
 			isa = PBXGroup;
 			children = (
 				G20000000000000000000002 /* AppWorkspaceWindowController.swift */,
+				J20000000000000000000002 /* NativeComputerUseRuntime.swift */,
 				A20000000000000000000005 /* GlobalHotKeyService.swift */,
 				C20000000000000000000001 /* GlobeKeySystemActionService.swift */,
 				D20000000000000000000001 /* InteractionSoundService.swift */,
@@ -235,6 +253,7 @@
 			isa = PBXGroup;
 			children = (
 				E20000000000000000000002 /* AppDashboardSnapshot.swift */,
+				J20000000000000000000003 /* ComputerUseTaskView.swift */,
 				E20000000000000000000003 /* WorkspaceSecondaryPages.swift */,
 				A20000000000000000000009 /* InputOverlay.swift */,
 				A20000000000000000000016 /* InputOverlayAtmosphere.swift */,
@@ -253,6 +272,7 @@
 		A40000000000000000000007 /* FridayTests */ = {
 			isa = PBXGroup;
 			children = (
+				J20000000000000000000004 /* ComputerUseRuntimeTests.swift */,
 				A20000000000000000000012 /* DictationProviderTests.swift */,
 				C20000000000000000000002 /* GlobeKeySystemActionServiceTests.swift */,
 				D20000000000000000000002 /* InteractionSoundServiceTests.swift */,
@@ -267,6 +287,7 @@
 		A40000000000000000000008 /* Runtime */ = {
 			isa = PBXGroup;
 			children = (
+				J40000000000000000000001 /* ComputerUse */,
 				A40000000000000000000009 /* Conversation */,
 				A40000000000000000000010 /* Work */,
 				B40000000000000000000001 /* Action */,
@@ -321,13 +342,39 @@
 			path = Action;
 			sourceTree = "<group>";
 		};
+		J40000000000000000000001 /* ComputerUse */ = {
+			isa = PBXGroup;
+			children = (
+				J20000000000000000000001 /* ComputerUseRuntime.swift */,
+			);
+			path = ComputerUse;
+			sourceTree = "<group>";
+		};
+		K40000000000000000000001 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				K20000000000000000000001 /* OlliBrandTypography.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		D40000000000000000000001 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				K40000000000000000000002 /* Fonts */,
 				D40000000000000000000002 /* Sounds */,
 				D40000000000000000000003 /* ThirdPartyNotices */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		K40000000000000000000002 /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				K20000000000000000000002 /* Mali-Bold.ttf */,
+				K20000000000000000000003 /* Mali-BoldItalic.ttf */,
+			);
+			path = Fonts;
 			sourceTree = "<group>";
 		};
 		D40000000000000000000002 /* Sounds */ = {
@@ -345,6 +392,7 @@
 			isa = PBXGroup;
 			children = (
 				D20000000000000000000007 /* Cuelume-LICENSE.txt */,
+				K20000000000000000000004 /* Mali-OFL.txt */,
 			);
 			path = ThirdPartyNotices;
 			sourceTree = "<group>";
@@ -444,6 +492,9 @@
 				D10000000000000000000005 /* success.wav in Resources */,
 				D10000000000000000000006 /* error.wav in Resources */,
 				D10000000000000000000007 /* Cuelume-LICENSE.txt in Resources */,
+				K10000000000000000000002 /* Mali-Bold.ttf in Resources */,
+				K10000000000000000000003 /* Mali-BoldItalic.ttf in Resources */,
+				K10000000000000000000004 /* Mali-OFL.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -462,6 +513,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				J10000000000000000000001 /* ComputerUseRuntime.swift in Sources */,
+				J10000000000000000000002 /* NativeComputerUseRuntime.swift in Sources */,
+				J10000000000000000000003 /* ComputerUseTaskView.swift in Sources */,
 				A10000000000000000000001 /* FridayApp.swift in Sources */,
 				A10000000000000000000002 /* ContentView.swift in Sources */,
 				G10000000000000000000001 /* AppDashboardView.swift in Sources */,
@@ -507,6 +561,7 @@
 				B10000000000000000000001 /* ConversationActionBridge.swift in Sources */,
 				B10000000000000000000002 /* RunningApplicationResolver.swift in Sources */,
 				B10000000000000000000003 /* FocusedInputActionExecutor.swift in Sources */,
+				K10000000000000000000001 /* OlliBrandTypography.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -514,6 +569,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				J10000000000000000000004 /* ComputerUseRuntimeTests.swift in Sources */,
 				A10000000000000000000010 /* DictationProviderTests.swift in Sources */,
 				C10000000000000000000002 /* GlobeKeySystemActionServiceTests.swift in Sources */,
 				D10000000000000000000002 /* InteractionSoundServiceTests.swift in Sources */,

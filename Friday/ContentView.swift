@@ -65,13 +65,13 @@ struct ContentView: View {
                 .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Olli")
+                OlliBrandText("Olli", brandSize: 16)
                     .font(.system(size: 16, weight: .semibold))
                 HStack(spacing: 5) {
                     Circle()
                         .fill(statusColor)
                         .frame(width: 5, height: 5)
-                    Text(friendlyHeaderStatus)
+                    OlliBrandText(friendlyHeaderStatus, brandSize: 11)
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.5))
                         .lineLimit(1)
@@ -201,7 +201,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("设置")
                     .font(.system(size: 15, weight: .semibold))
-                Text("让 Olli 更适合你")
+                OlliBrandText("让 Olli 更适合你", brandSize: 10)
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.45))
             }
@@ -236,12 +236,12 @@ struct ContentView: View {
                 HStack(spacing: 8) {
                     appIcon("文档图标")
                         .foregroundStyle(.cyan)
-                    Text(message)
+                    OlliBrandText(message, brandSize: 12)
                         .font(.system(size: 12, weight: .semibold))
                     Spacer()
                 }
 
-                Text(text)
+                OlliBrandText(text, brandSize: 13)
                     .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.82))
                     .lineLimit(4)
@@ -309,11 +309,11 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("本次使用")
                     .font(.system(size: 11, weight: .semibold))
-                Text(sessionUsageText)
+                OlliBrandText(sessionUsageText, brandSize: 10)
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.48))
                     .lineLimit(1)
-                Text(friendlyQuotaDetail)
+                OlliBrandText(friendlyQuotaDetail, brandSize: 9)
                     .font(.system(size: 9))
                     .foregroundStyle(.white.opacity(0.34))
                     .lineLimit(1)
@@ -418,7 +418,7 @@ struct ContentView: View {
                     .help("清除这段文字")
                 }
 
-                Text(output)
+                OlliBrandText(output, brandSize: 12)
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.62))
                     .lineLimit(2)
@@ -439,7 +439,7 @@ struct ContentView: View {
             VStack(spacing: 5) {
                 appIcon(icon, size: 18)
                     .foregroundStyle(tint)
-                Text(title)
+                OlliBrandText(title, brandSize: 11)
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)
             }
@@ -466,7 +466,7 @@ struct ContentView: View {
             appIcon(icon)
                 .foregroundStyle(.orange)
                 .frame(width: 18)
-            Text(title)
+            OlliBrandText(title, brandSize: 11)
                 .font(.system(size: 11, weight: .medium))
             Spacer()
             Button(actionTitle, action: action)
@@ -486,7 +486,7 @@ struct ContentView: View {
         HStack(spacing: 10) {
             appIcon(icon)
                 .foregroundStyle(tint)
-            Text(message)
+            OlliBrandText(message, brandSize: 12)
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -512,7 +512,7 @@ struct ContentView: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 appIcon(icon)
-                Text(title)
+                OlliBrandText(title, brandSize: 11)
                     .font(.system(size: 11, weight: .semibold))
             }
             .foregroundStyle(emphasized ? Color.black : Color.white.opacity(0.84))
@@ -577,7 +577,7 @@ struct ContentView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title)
+            OlliBrandText(title, brandSize: 10)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.38))
                 .padding(.leading, 4)
@@ -697,11 +697,11 @@ struct ContentView: View {
 
     private func settingsLabels(title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title)
+            OlliBrandText(title, brandSize: 12)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.9))
                 .lineLimit(1)
-            Text(detail)
+            OlliBrandText(detail, brandSize: 10)
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.4))
                 .lineLimit(1)

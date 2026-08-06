@@ -14,6 +14,7 @@ struct FridayApp: App {
     @StateObject private var appState: AppState
 
     init() {
+        OlliBrandTypography.registerBundledFonts()
         let environment = ProcessInfo.processInfo.environment
         let isRunningTests = environment["XCTestConfigurationFilePath"] != nil
             || environment["XCTestBundlePath"] != nil
@@ -122,6 +123,11 @@ final class AppState: ObservableObject {
     private lazy var conversationActionBridge = ConversationActionBridge(
         executor: focusedInputActionExecutor
     )
+    private lazy var computerUseRuntime = NativeComputerUseRuntime()
+    private lazy var computerUseTaskRunner = TextEditSmokeTaskRunner(
+        runtime: computerUseRuntime
+    )
+    private let textEditSmokeTask = TextEditSmokeTask.makeDefault()
     private lazy var conversationCoordinator: ConversationCoordinator = {
         let conversationProvider: ConversationProviding
         switch ConversationMode.configured {
@@ -157,6 +163,7 @@ final class AppState: ObservableObject {
     private var recordingLimitTask: Task<Void, Never>?
     private var feedbackTask: Task<Void, Never>?
     private var conversationStartTask: Task<Void, Never>?
+    private var computerUseExecutionTask: Task<Void, Never>?
     private var activationObserver: NSObjectProtocol?
     private var terminationObserver: NSObjectProtocol?
     private var workspaceOpenObserver: NSObjectProtocol?
@@ -230,6 +237,12 @@ final class AppState: ObservableObject {
             self?.overlayModel.onCollapseDashboard?()
             self?.workspaceWindowController?.show()
         }
+        overlayModel.onRunComputerUseSmokeTask = { [weak self] in
+            self?.runTextEditSmokeTask()
+        }
+        overlayModel.onCancelComputerUseTask = { [weak self] in
+            self?.cancelComputerUseTask()
+        }
         microphoneService.onLevel = { [weak self] level in
             guard self?.workflowState.isRecording == true else { return }
             self?.overlayModel.audioLevel = level
@@ -269,6 +282,7 @@ final class AppState: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
+                self?.cancelComputerUseTask()
                 self?.releaseGlobalHotKeys()
             }
         }
@@ -385,6 +399,24 @@ final class AppState: ObservableObject {
             isPresented: conversationCoordinator.isConversationActive,
             transcript: conversationCoordinator.liveTranscript
         )
+    }
+
+    private func runTextEditSmokeTask() {
+        guard computerUseExecutionTask == nil else { return }
+        overlayModel.computerUseTaskPath = textEditSmokeTask.outputURL.path
+        computerUseTaskRunner.onStateChange = { [weak self] state in
+            self?.overlayModel.computerUseTaskState = state
+        }
+        computerUseExecutionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = await computerUseTaskRunner.run(textEditSmokeTask)
+            computerUseExecutionTask = nil
+        }
+    }
+
+    private func cancelComputerUseTask() {
+        computerUseTaskRunner.cancel()
+        computerUseExecutionTask?.cancel()
     }
 
     private static func quotaLabel(for issueCode: String?) -> String {

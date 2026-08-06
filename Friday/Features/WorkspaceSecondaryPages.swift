@@ -153,10 +153,10 @@ extension AppDashboardView {
     func pageHeader(title: String, subtitle: String) -> some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                OlliBrandText(title, brandSize: 24)
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(WorkspacePalette.ink)
-                Text(subtitle)
+                OlliBrandText(subtitle, brandSize: 10)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(WorkspacePalette.muted)
             }
@@ -165,7 +165,7 @@ extension AppDashboardView {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 7, height: 7)
-                Text(model.dashboard.status)
+                OlliBrandText(model.dashboard.status, brandSize: 10)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(WorkspacePalette.muted)
                     .lineLimit(1)
@@ -196,7 +196,7 @@ extension AppDashboardView {
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
-            Text(label)
+            OlliBrandText(label, brandSize: 10)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(WorkspacePalette.muted)
                 .lineLimit(1)
@@ -224,7 +224,7 @@ extension AppDashboardView {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
+            OlliBrandText(title, brandSize: 13)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(WorkspacePalette.ink)
 
@@ -259,16 +259,16 @@ extension AppDashboardView {
             templateIcon(iconAsset, size: 18, color: WorkspacePalette.muted)
                 .frame(width: 28, height: 28)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                OlliBrandText(title, brandSize: 11)
                     .font(.system(size: 11, weight: .semibold))
-                Text(detail)
+                OlliBrandText(detail, brandSize: 9)
                     .font(.system(size: 9))
                     .foregroundStyle(WorkspacePalette.muted)
                     .lineLimit(2)
             }
             Spacer(minLength: 12)
             if let trailing {
-                Text(trailing)
+                OlliBrandText(trailing, brandSize: 9)
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(trailingColor)
             }
@@ -294,9 +294,9 @@ extension AppDashboardView {
             .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                OlliBrandText(title, brandSize: 11)
                     .font(.system(size: 11, weight: .semibold))
-                Text(detail)
+                OlliBrandText(detail, brandSize: 9)
                     .font(.system(size: 9))
                     .foregroundStyle(WorkspacePalette.muted)
                     .lineLimit(1)
@@ -331,9 +331,9 @@ extension AppDashboardView {
                 templateIcon(iconAsset, size: 18, color: tint)
                     .frame(width: 28, height: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
+                    OlliBrandText(title, brandSize: 11)
                         .font(.system(size: 11, weight: .semibold))
-                    Text(detail)
+                    OlliBrandText(detail, brandSize: 9)
                         .font(.system(size: 9))
                         .foregroundStyle(WorkspacePalette.muted)
                         .lineLimit(1)

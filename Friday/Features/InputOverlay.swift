@@ -101,6 +101,8 @@ final class InputOverlayModel: ObservableObject {
     @Published var isDashboardExpanded = false
     @Published var expandedPage: InputOverlayExpandedPage = .dashboard
     @Published var dashboard = AppDashboardSnapshot()
+    @Published var computerUseTaskState: ComputerUseTaskState = .idle
+    @Published var computerUseTaskPath = TextEditSmokeTask.makeDefault().outputURL.path
 
     var isExpanded: Bool {
         if isDashboardExpanded { return true }
@@ -143,6 +145,8 @@ final class InputOverlayModel: ObservableObject {
     var onRefresh: (() -> Void)?
     var onQuit: (() -> Void)?
     var onOpenWorkspace: (() -> Void)?
+    var onRunComputerUseSmokeTask: (() -> Void)?
+    var onCancelComputerUseTask: (() -> Void)?
     var onCollapseDashboard: (() -> Void)?
     var onPresentSettings: (() -> Void)?
     var onPresentDashboard: (() -> Void)?

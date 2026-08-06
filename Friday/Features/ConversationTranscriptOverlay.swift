@@ -124,6 +124,9 @@ private final class ConversationTranscriptBubbleView: NSView {
     @discardableResult
     func update(speaker: String, text: String) -> NSSize {
         speakerLabel.stringValue = speaker
+        speakerLabel.font = speaker.contains("Olli")
+            ? OlliBrandTypography.nsFont(size: 10)
+            : .systemFont(ofSize: 10, weight: .medium)
         textLabel.stringValue = text
 
         let maximumTextWidth = Self.maximumWidth

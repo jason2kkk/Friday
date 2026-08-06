@@ -353,11 +353,12 @@ AX 语义动作并读回验证
 - Conversation 与 Work 的基础契约；
 - Mock Work Runtime；
 - `open_application` 和 `write_focused_input` 两个本地 Action；
-- ActionProposal、ActionReceipt、风险和幂等基础。
+- ActionProposal、ActionReceipt、风险和幂等基础；
+- Computer Use 最小中立契约、能力目录、动作后重观察和固定 TextEdit 任务入口；原生适配器只覆盖本地烟囱任务，尚未接入真实 Planner。
 
 当前关键缺口：
 
-- 通用 Computer Use Runtime；
+- 通用 Computer Use Runtime（当前只有受限 TextEdit 原生适配器，尚未覆盖窗口/AX/截图联合观察）；
 - 应用/窗口/AX/截图联合观察；
 - 点击、滚动、快捷键、文件、Shell 和浏览器工具；
 - 单一真实 Planner 与多步骤验证循环；
@@ -383,7 +384,7 @@ AX 语义动作并读回验证
 ## 9. 参考与决策边界
 
 - Qwen Audio Agent：借鉴 Realtime 前台与后台 ACP Agent 的非阻塞调度，不把它视为桌面执行器。
-- Cua Driver：优先验证其 macOS Computer Use、后台动作、结构化回执，以及嵌入式进程的真实 TCC 权限归属；不在可行性验证前承诺正式依赖。
+- Cua Driver：源码级确认其动作回执、嵌入式 daemon 与升级阶梯有参考价值；由于它不是 Swift Package，正式接入仍待 arm64 构建产物、嵌套签名、公证、macOS 14 和签名真机 TCC 验证，不作为当前 Computer Use PR 的运行依赖。
 - Agent Notch：参考 Swift 上下文选择、工具路由和视觉执行循环，不直接采用其模型、密钥或单体状态设计。
 - Agent-S：参考截图 grounding、规划/执行拆分和评测方法，不采用 Python/pyautogui 作为 Olli 的原生生产执行层。
 
