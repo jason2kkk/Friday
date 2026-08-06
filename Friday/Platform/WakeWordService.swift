@@ -22,11 +22,11 @@ enum WakeWordListeningState: Equatable {
     var statusText: String {
         switch self {
         case .stopped:
-            return "Hey Friday 已暂停"
+            return "Hey Olli 已暂停"
         case .requestingPermission:
-            return "正在准备 Hey Friday"
+            return "正在准备 Hey Olli"
         case .listening:
-            return "可以直接说 Hey Friday"
+            return "可以直接说 Hey Olli"
         case .unavailable(let message):
             return message
         }
@@ -54,7 +54,7 @@ struct WakePhraseMatcher {
 
         guard normalized.count >= 2 else { return false }
         return normalized.indices.dropLast().contains { index in
-            normalized[index] == "hey" && normalized[normalized.index(after: index)] == "friday"
+            normalized[index] == "hey" && normalized[normalized.index(after: index)] == "olli"
         }
     }
 }
@@ -70,13 +70,13 @@ final class OnDeviceWakeWordService: WakeWordProviding {
         var errorDescription: String? {
             switch self {
             case .permissionDenied:
-                return "需要语音识别和麦克风权限才能使用 Hey Friday。"
+                return "需要语音识别和麦克风权限才能使用 Hey Olli。"
             case .onDeviceRecognitionUnavailable:
-                return "这台 Mac 暂时不支持本机 Hey Friday 识别。"
+                return "这台 Mac 暂时不支持本机 Hey Olli 识别。"
             case .recognizerUnavailable:
                 return "本机语音识别暂时不可用。"
             case .microphoneUnavailable:
-                return "没有找到可用于 Hey Friday 的麦克风。"
+                return "没有找到可用于 Hey Olli 的麦克风。"
             }
         }
     }
@@ -165,7 +165,7 @@ final class OnDeviceWakeWordService: WakeWordProviding {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = true
-        request.contextualStrings = ["Hey Friday"]
+        request.contextualStrings = ["Hey Olli"]
         request.taskHint = .dictation
         recognitionRequest = request
 
@@ -244,7 +244,7 @@ final class OnDeviceWakeWordService: WakeWordProviding {
             try beginRecognitionCycle()
         } catch {
             let message = (error as? LocalizedError)?.errorDescription
-                ?? "Hey Friday 暂时不可用。"
+                ?? "Hey Olli 暂时不可用。"
             onStateChanged?(.unavailable(message))
             scheduleRestart()
         }

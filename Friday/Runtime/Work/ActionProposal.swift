@@ -82,6 +82,7 @@ struct ActionReceiptID: Hashable, Sendable, Codable, CustomStringConvertible {
 
 enum ActionRisk: String, Codable, Equatable, Sendable {
     case readOnly = "read_only"
+    case localNavigation = "local_navigation"
     case reversibleLocalWrite = "reversible_local_write"
     case externalSideEffect = "external_side_effect"
     case destructive
@@ -197,6 +198,7 @@ struct ActionReceipt: Codable, Equatable, Sendable {
     let observedResult: String
     let undoToken: String?
     let executedAt: Date
+    let errorCode: String?
     let error: String?
 
     enum CodingKeys: String, CodingKey {
@@ -208,6 +210,7 @@ struct ActionReceipt: Codable, Equatable, Sendable {
         case observedResult = "observed_result"
         case undoToken = "undo_token"
         case executedAt = "executed_at"
+        case errorCode = "error_code"
         case error
     }
 
@@ -220,6 +223,7 @@ struct ActionReceipt: Codable, Equatable, Sendable {
         observedResult: String,
         undoToken: String?,
         executedAt: Date,
+        errorCode: String? = nil,
         error: String?
     ) {
         self.id = id
@@ -230,6 +234,7 @@ struct ActionReceipt: Codable, Equatable, Sendable {
         self.observedResult = observedResult
         self.undoToken = undoToken
         self.executedAt = executedAt
+        self.errorCode = errorCode
         self.error = error
     }
 
@@ -251,6 +256,7 @@ struct ActionReceipt: Codable, Equatable, Sendable {
         observedResult = try container.decode(String.self, forKey: .observedResult)
         undoToken = try container.decodeIfPresent(String.self, forKey: .undoToken)
         executedAt = try container.decode(Date.self, forKey: .executedAt)
+        errorCode = try container.decodeIfPresent(String.self, forKey: .errorCode)
         error = try container.decodeIfPresent(String.self, forKey: .error)
     }
 
@@ -264,6 +270,7 @@ struct ActionReceipt: Codable, Equatable, Sendable {
         try container.encode(observedResult, forKey: .observedResult)
         try container.encodeIfPresent(undoToken, forKey: .undoToken)
         try container.encode(executedAt, forKey: .executedAt)
+        try container.encodeIfPresent(errorCode, forKey: .errorCode)
         try container.encodeIfPresent(error, forKey: .error)
     }
 }
@@ -296,7 +303,7 @@ enum ActionRPCCodecError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .payloadTooLarge:
-            return "Agent 动作消息超过 Friday 的安全大小限制。"
+            return "Agent 动作消息超过 Olli 的安全大小限制。"
         case .unsupportedVersion:
             return "Agent 动作消息版本不受支持。"
         case .unexpectedMethod:

@@ -1,5 +1,5 @@
 // 功能：定义一整套 Friday Talk Runtime 的中立装配与生命周期边界。
-// 职责：原子组合 Provider、音频端口、音频所有权和统一启停顺序，并用直接 Realtime 包装器保持当前产品行为。
+// 职责：原子组合 Provider、音频端口、端点转发策略、音频所有权和统一启停顺序，并用直接 Realtime 包装器保持当前产品行为。
 // 边界：不选择具体供应商、不绘制界面、不读取凭证，也不实现麦克风、播放、WebSocket 或后台 Work。
 
 import Foundation
@@ -72,6 +72,10 @@ final class DirectRealtimeConversationRuntimeSession: ConversationRuntimeSession
         guard !isStarted else { return }
 
         do {
+            audioService.configureInputForwarding(
+                endpointMode: conversationProvider.endpointMode,
+                allowsResponseInterruption: conversationProvider.allowsResponseInterruption
+            )
             onLifecycleEvent?(.localAudioStartRequested)
             try await audioService.start()
             try Task.checkCancellation()
@@ -79,6 +83,10 @@ final class DirectRealtimeConversationRuntimeSession: ConversationRuntimeSession
             onLifecycleEvent?(.providerConnectRequested)
             try await conversationProvider.connect()
             try Task.checkCancellation()
+            audioService.configureInputForwarding(
+                endpointMode: conversationProvider.endpointMode,
+                allowsResponseInterruption: conversationProvider.allowsResponseInterruption
+            )
             onLifecycleEvent?(.providerConnected)
             isStarted = true
         } catch {

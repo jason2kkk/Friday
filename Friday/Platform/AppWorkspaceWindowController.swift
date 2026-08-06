@@ -1,6 +1,6 @@
-// 功能：管理 Friday 的 AppKit 窗口生命周期，使带 Dock 入口的后台助手可以按需显示唯一原生主工作台。
-// 职责：声明关窗后继续运行和 Dock 重开行为，配置 NSWindow、原生玻璃、尺寸与 SwiftUI ContentView 宿主，并负责激活和聚焦窗口。
-// 边界：不持有业务工作流、不读取权限或网络状态、不改变 LSUIElement 策略；关闭窗口不会退出 Friday。
+// 功能：管理 Olli 的 AppKit 窗口生命周期，使带 Dock 入口的后台助手可以按需显示唯一原生主工作台。
+// 职责：声明关窗后继续运行和 Dock 重开行为，配置 NSWindow、原生玻璃、尺寸与 SwiftUI AppDashboardView 宿主，并负责激活和聚焦窗口。
+// 边界：不持有业务工作流、不读取权限或网络状态、不改变 App 身份策略；关闭窗口不会退出 Olli。
 
 import AppKit
 import SwiftUI
@@ -99,7 +99,7 @@ final class AppWorkspaceWindowController: NSObject, NSWindowDelegate {
         super.init()
 
         let hostingView = NSHostingView(
-            rootView: ContentView(model: model)
+            rootView: AppDashboardView(model: model)
                 .preferredColorScheme(.light)
         )
         hostingView.frame = NSRect(origin: .zero, size: initialSize)
@@ -111,7 +111,7 @@ final class AppWorkspaceWindowController: NSObject, NSWindowDelegate {
             hostingView: hostingView
         )
         window.delegate = self
-        window.title = "Friday"
+        window.title = "Olli"
         window.appearance = NSAppearance(named: .aqua)
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true

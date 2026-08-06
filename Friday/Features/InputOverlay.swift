@@ -153,10 +153,89 @@ private final class InputOverlayPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+private enum InputOverlayShapeMetrics {
+    static let compactTopCornerRadius: CGFloat = 6
+    static let compactBottomCornerRadius: CGFloat = 14
+    static let expandedTopCornerRadius: CGFloat = 10
+    static let expandedBottomCornerRadius: CGFloat = 28
+
+    static func path(
+        in rect: CGRect,
+        topCornerRadius: CGFloat,
+        bottomCornerRadius: CGFloat
+    ) -> CGPath {
+        let path = CGMutablePath()
+        let top = topCornerRadius
+        let bottom = bottomCornerRadius
+
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + top, y: rect.maxY - top),
+            control: CGPoint(x: rect.minX + top, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + top, y: rect.minY + bottom))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + top + bottom, y: rect.minY),
+            control: CGPoint(x: rect.minX + top, y: rect.minY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - top - bottom, y: rect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - top, y: rect.minY + bottom),
+            control: CGPoint(x: rect.maxX - top, y: rect.minY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - top, y: rect.maxY - top))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.maxY),
+            control: CGPoint(x: rect.maxX - top, y: rect.maxY)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// 承载不带独立轮廓的原生玻璃，由根视图统一裁切玻璃、渐变和内容。
+private final class InputOverlayBackdropView: NSView {
+    private let effectView: NSView
+
+    override init(frame frameRect: NSRect) {
+        if #available(macOS 26.0, *) {
+            let glassView = NSGlassEffectView()
+            glassView.appearance = NSAppearance(named: .darkAqua)
+            glassView.style = .clear
+            glassView.tintColor = NSColor.black.withAlphaComponent(0.68)
+            glassView.cornerRadius = 0
+            effectView = glassView
+        } else {
+            let visualEffectView = NSVisualEffectView()
+            visualEffectView.material = .hudWindow
+            visualEffectView.blendingMode = .behindWindow
+            visualEffectView.state = .active
+            effectView = visualEffectView
+        }
+
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        effectView.frame = bounds
+        effectView.autoresizingMask = [.width, .height]
+        addSubview(effectView)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        effectView.frame = bounds
+    }
+}
+
 /// 让原生玻璃直接位于窗口根层，SwiftUI 只负责玻璃上方的内容与遮罩。
 private final class InputOverlayRootView: NSView {
-    private static let glassCornerRadius: CGFloat = 28
-    private let backdropView: NSView
+    private let backdropView: InputOverlayBackdropView
+    private let shapeMaskLayer = CAShapeLayer()
     private var compactSize = CGSize(width: 264, height: 32)
     private var expandedSize = InputOverlaySizing.expandedSize
     private var isExpanded = false
@@ -164,32 +243,15 @@ private final class InputOverlayRootView: NSView {
     private var transitionGeneration = 0
 
     override init(frame frameRect: NSRect) {
-        if #available(macOS 26.0, *) {
-            let glassView = NSGlassEffectView()
-            glassView.appearance = NSAppearance(named: .darkAqua)
-            glassView.style = .clear
-            glassView.tintColor = Self.panelTintColor
-            glassView.cornerRadius = Self.glassCornerRadius
-            glassView.wantsLayer = true
-            glassView.layer?.cornerRadius = Self.glassCornerRadius
-            glassView.layer?.cornerCurve = .continuous
-            glassView.layer?.masksToBounds = true
-            backdropView = glassView
-        } else {
-            let visualEffectView = NSVisualEffectView()
-            visualEffectView.material = .hudWindow
-            visualEffectView.blendingMode = .behindWindow
-            visualEffectView.state = .active
-            visualEffectView.wantsLayer = true
-            visualEffectView.layer?.cornerRadius = Self.glassCornerRadius
-            visualEffectView.layer?.cornerCurve = .continuous
-            visualEffectView.layer?.masksToBounds = true
-            backdropView = visualEffectView
-        }
+        backdropView = InputOverlayBackdropView(frame: .zero)
 
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
+        shapeMaskLayer.fillColor = NSColor.white.cgColor
+        shapeMaskLayer.frame = bounds
+        shapeMaskLayer.path = currentMaskPath
+        layer?.mask = shapeMaskLayer
         backdropView.alphaValue = 0
         backdropView.isHidden = true
         addSubview(backdropView)
@@ -204,6 +266,8 @@ private final class InputOverlayRootView: NSView {
         super.layout()
         guard !isTransitioning else { return }
         backdropView.frame = isExpanded ? expandedFrame : compactFrame
+        shapeMaskLayer.frame = bounds
+        shapeMaskLayer.path = currentMaskPath
     }
 
     func setExpanded(
@@ -217,6 +281,8 @@ private final class InputOverlayRootView: NSView {
         self.expandedSize = expandedSize
         let wasExpanded = isExpanded
         let sizeChanged = previousExpandedSize != expandedSize
+        let previousMaskPath = shapeMaskLayer.presentation()?.path
+            ?? shapeMaskLayer.path
         isExpanded = expanded
         transitionGeneration += 1
         let currentGeneration = transitionGeneration
@@ -230,15 +296,24 @@ private final class InputOverlayRootView: NSView {
         backdropView.alphaValue = 1
 
         let targetFrame = expanded ? expandedFrame : compactFrame
+        let targetMaskPath = currentMaskPath
         guard animated, wasExpanded != expanded || (expanded && sizeChanged) else {
             isTransitioning = false
             backdropView.frame = targetFrame
+            shapeMaskLayer.path = targetMaskPath
             backdropView.alphaValue = expanded ? 1 : 0
             backdropView.isHidden = !expanded
             return
         }
 
         isTransitioning = true
+        shapeMaskLayer.path = targetMaskPath
+        let maskAnimation = CABasicAnimation(keyPath: "path")
+        maskAnimation.fromValue = previousMaskPath
+        maskAnimation.toValue = targetMaskPath
+        maskAnimation.duration = expanded ? 0.36 : 0.3
+        maskAnimation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        shapeMaskLayer.add(maskAnimation, forKey: "islandShape")
         NSAnimationContext.runAnimationGroup { context in
             context.duration = expanded ? 0.36 : 0.3
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -249,6 +324,7 @@ private final class InputOverlayRootView: NSView {
                   self.transitionGeneration == currentGeneration else { return }
             self.isTransitioning = false
             self.backdropView.frame = targetFrame
+            self.shapeMaskLayer.path = targetMaskPath
             self.backdropView.alphaValue = expanded ? 1 : 0
             self.backdropView.isHidden = !expanded
             self.needsLayout = true
@@ -260,7 +336,7 @@ private final class InputOverlayRootView: NSView {
             x: (bounds.width - expandedSize.width) / 2,
             y: bounds.height - expandedSize.height,
             width: expandedSize.width,
-            height: expandedSize.height + Self.glassCornerRadius
+            height: expandedSize.height
         )
     }
 
@@ -273,7 +349,26 @@ private final class InputOverlayRootView: NSView {
         )
     }
 
-    private static let panelTintColor = NSColor.black.withAlphaComponent(0.68)
+    private var currentMaskPath: CGPath {
+        let size = isExpanded ? expandedSize : compactSize
+        let rect = NSRect(
+            x: (bounds.width - size.width) / 2,
+            y: bounds.height - size.height,
+            width: size.width,
+            height: size.height
+        )
+        let topRadius = isExpanded
+            ? InputOverlayShapeMetrics.expandedTopCornerRadius
+            : InputOverlayShapeMetrics.compactTopCornerRadius
+        let bottomRadius = isExpanded
+            ? InputOverlayShapeMetrics.expandedBottomCornerRadius
+            : InputOverlayShapeMetrics.compactBottomCornerRadius
+        return InputOverlayShapeMetrics.path(
+            in: rect,
+            topCornerRadius: topRadius,
+            bottomCornerRadius: bottomRadius
+        )
+    }
 }
 
 @MainActor
@@ -697,7 +792,7 @@ final class InputOverlayController {
         case "result":
             show(
                 .result(
-                    text: "这是 Friday 整理后的示例文字，用于检查灵动岛展开状态。",
+                    text: "这是 Olli 整理后的示例文字，用于检查灵动岛展开状态。",
                     message: "未找到可安全写入的输入框",
                     canRetry: true
                 )
@@ -746,17 +841,16 @@ private struct InputOverlayView: View {
                     height: model.currentSize.height,
                     alignment: .top
                 )
-                .clipShape(
-                    NotchShape(
-                        topCornerRadius: model.isExpanded ? 0 : 6,
-                        bottomCornerRadius: model.isExpanded ? 28 : 14
-                    )
-                )
                 .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(.black)
-                        .frame(height: 1)
-                        .padding(.horizontal, model.isExpanded ? 0 : 6)
+                    if !model.isExpanded {
+                        Rectangle()
+                            .fill(.black)
+                            .frame(height: 1)
+                            .padding(
+                                .horizontal,
+                                InputOverlayShapeMetrics.compactTopCornerRadius
+                            )
+                    }
                 }
                 .scaleEffect(
                     x: model.isCollapsing ? 0.72 : (model.isAppearing ? 0.84 : 1),
@@ -811,20 +905,20 @@ private struct InputOverlayView: View {
     }
 
     private var expandedContent: some View {
-        IslandDashboardView(model: model)
+        ContentView(model: model)
     }
 
     private var idleContent: some View {
         HStack(spacing: 0) {
             compactWing {
-                Image("灵动岛图标")
+                Image("灵动岛紧凑图标")
                     .renderingMode(.original)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 22, height: 22)
                     .offset(x: 4)
-                    .accessibilityLabel("Friday")
+                    .accessibilityLabel("Olli")
             }
 
             Color.clear
@@ -935,46 +1029,4 @@ private struct InputOverlayView: View {
             .frame(maxHeight: .infinity, alignment: .center)
     }
 
-}
-
-struct NotchShape: Shape {
-    var topCornerRadius: CGFloat
-    var bottomCornerRadius: CGFloat
-
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(topCornerRadius, bottomCornerRadius) }
-        set {
-            topCornerRadius = newValue.first
-            bottomCornerRadius = newValue.second
-        }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let top = topCornerRadius
-        let bottom = bottomCornerRadius
-
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX + top, y: rect.minY + top),
-            control: CGPoint(x: rect.minX + top, y: rect.minY)
-        )
-        path.addLine(to: CGPoint(x: rect.minX + top, y: rect.maxY - bottom))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX + top + bottom, y: rect.maxY),
-            control: CGPoint(x: rect.minX + top, y: rect.maxY)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX - top - bottom, y: rect.maxY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - top, y: rect.maxY - bottom),
-            control: CGPoint(x: rect.maxX - top, y: rect.maxY)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX - top, y: rect.minY + top))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.minY),
-            control: CGPoint(x: rect.maxX - top, y: rect.minY)
-        )
-        path.closeSubpath()
-        return path
-    }
 }

@@ -218,17 +218,17 @@ extension ConversationCoordinator {
             return audioError.localizedDescription
         }
         if error is URLError {
-            return "Friday 语音服务未连接"
+            return "Olli 语音服务未连接"
         }
-        return "Friday 暂时无法开始语音对话"
+        return "Olli 暂时无法开始语音对话"
     }
 
     func sanitizedServiceMessage(_ message: String) -> String {
         let lowercased = message.lowercased()
         if lowercased.contains("api key") || lowercased.contains("bearer") {
-            return "Friday 语音服务配置不可用"
+            return "Olli 语音服务配置不可用"
         }
-        return message.isEmpty ? "Friday 语音服务暂时不可用" : message
+        return message.isEmpty ? "Olli 语音服务暂时不可用" : message
     }
 }
 
@@ -277,11 +277,29 @@ extension ConversationTurnSource {
 }
 
 func diagnosticToolStatus(from output: String) -> String {
+    diagnosticToolCode(named: "status", from: output) ?? "unknown"
+}
+
+func diagnosticToolErrorCode(from output: String) -> String? {
+    diagnosticToolCode(named: "error_code", from: output)
+}
+
+func diagnosticToolAccessibilityPermission(from output: String) -> String? {
+    guard let permission = diagnosticToolCode(
+        named: "accessibility_permission",
+        from: output
+    ), ["granted", "denied", "unknown", "not_required"].contains(permission) else {
+        return nil
+    }
+    return permission
+}
+
+private func diagnosticToolCode(named field: String, from output: String) -> String? {
     guard let data = output.data(using: .utf8),
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let status = object["status"] as? String,
-          status.range(of: #"^[a-z_]{1,40}$"#, options: .regularExpression) != nil else {
-        return "unknown"
+          let value = object[field] as? String,
+          value.range(of: #"^[a-z_]{1,40}$"#, options: .regularExpression) != nil else {
+        return nil
     }
-    return status
+    return value
 }

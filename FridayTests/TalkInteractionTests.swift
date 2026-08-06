@@ -1,5 +1,5 @@
 // 功能：验证 Talk 会话身份、展示映射、音频打断、Action 路由和区域框选等高风险交互边界。
-// 职责：覆盖会话账本、端点静音交接、响应保护、迟到事件、回声尾音、可撤销工具回执、屏幕指引和图片上下文等纯逻辑。
+// 职责：覆盖会话账本、Provider-VAD/client-gate 端点分流、上行暂停、自管回复、迟到事件、响应保护、可撤销工具回执、屏幕指引和图片上下文等纯逻辑。
 // 边界：不启动真实音频设备，不请求屏幕权限，不连接 Realtime 服务，也不产生付费模型响应。
 
 import XCTest
@@ -77,6 +77,50 @@ final class TalkInteractionTests: XCTestCase {
         XCTAssertTrue(gate.hasConfirmedSpeech)
         XCTAssertTrue(gate.hasConfirmedInterruption)
         XCTAssertEqual(gate.inputForRealtime(audioChunk(level: 0.52)).count, 1)
+    }
+
+    func testInputGateAcceptsSyllabicInterruptionAcrossShortGaps() {
+        var gate = ConversationInputGate()
+        gate.beginAssistantPlayback(allowsInterruption: true)
+
+        let syllabicSpeech: [Float] = [
+            0.56, 0.64, 0.18,
+            0.58, 0.69, 0.20,
+            0.57, 0.66
+        ]
+        let released = syllabicSpeech.flatMap {
+            gate.inputForRealtime(audioChunk(level: $0))
+        }
+
+        XCTAssertGreaterThan(released.count, 1)
+        XCTAssertTrue(gate.hasConfirmedInterruption)
+        XCTAssertTrue(
+            gate.takeTransitions().contains(.speechConfirmed(interruption: true))
+        )
+    }
+
+    func testInputGateResetsCandidateAfterLongGapWithBoundedDiagnostics() {
+        var gate = ConversationInputGate()
+        gate.beginAssistantPlayback(allowsInterruption: true)
+
+        _ = gate.inputForRealtime(audioChunk(level: 0.58))
+        _ = gate.inputForRealtime(audioChunk(level: 0.66))
+        for _ in 0..<4 {
+            _ = gate.inputForRealtime(audioChunk(level: 0.10))
+        }
+
+        let snapshots: [ConversationInputGateCandidateSnapshot] = gate
+            .takeTransitions()
+            .compactMap { transition in
+            guard case .candidateReset(let snapshot) = transition else { return nil }
+            return snapshot
+        }
+        let reset = snapshots.first
+        XCTAssertEqual(reset?.reason, .gapToleranceExceeded)
+        XCTAssertEqual(reset?.interruption, true)
+        XCTAssertEqual(reset?.voicedMilliseconds, 100)
+        XCTAssertGreaterThanOrEqual(reset?.gapMilliseconds ?? 0, 180)
+        XCTAssertFalse(gate.hasConfirmedInterruption)
     }
 
     func testInputGateTurnsStableRaisedNoiseIntoEndpointSilence() {
@@ -208,12 +252,120 @@ final class TalkInteractionTests: XCTestCase {
         )
     }
 
+    func testProviderVADForwardsListeningAudioAndConfirmedAECSpeechDuringPlayback() {
+        let captured = audioChunk(level: 0.34)
+        let gated = [audioChunk(level: 0.51)]
+
+        let providerListening = ConversationInputForwardingPolicy.realtimeChunks(
+            endpointMode: .providerVAD,
+            assistantIsActive: false,
+            supportsEchoCancelledInterruption: true,
+            capturedChunk: captured,
+            gatedChunks: gated
+        )
+        XCTAssertEqual(providerListening.count, 1)
+        XCTAssertEqual(providerListening.first?.pcm16, captured.pcm16)
+        XCTAssertEqual(providerListening.first?.normalizedLevel, captured.normalizedLevel)
+        let fullDuplexPlayback = ConversationInputForwardingPolicy.realtimeChunks(
+                endpointMode: .providerVAD,
+                assistantIsActive: true,
+                supportsEchoCancelledInterruption: true,
+                capturedChunk: captured,
+                gatedChunks: gated
+            )
+        XCTAssertEqual(fullDuplexPlayback.count, 1)
+        XCTAssertEqual(fullDuplexPlayback.first?.pcm16, gated.first?.pcm16)
+        XCTAssertTrue(
+            ConversationInputForwardingPolicy.realtimeChunks(
+                endpointMode: .providerVAD,
+                assistantIsActive: true,
+                supportsEchoCancelledInterruption: false,
+                capturedChunk: captured,
+                gatedChunks: gated
+            ).isEmpty
+        )
+        let clientGate = ConversationInputForwardingPolicy.realtimeChunks(
+            endpointMode: .clientGate,
+            assistantIsActive: false,
+            supportsEchoCancelledInterruption: false,
+            capturedChunk: captured,
+            gatedChunks: gated
+        )
+        XCTAssertEqual(clientGate.count, 1)
+        XCTAssertEqual(clientGate.first?.pcm16, gated.first?.pcm16)
+        XCTAssertEqual(clientGate.first?.normalizedLevel, gated.first?.normalizedLevel)
+    }
+
     func testScreenContextItemIDAlwaysFitsRealtimeLimit() {
         for _ in 0..<100 {
             let itemID = RealtimeConversationProvider.makeScreenContextItemID()
             XCTAssertLessThanOrEqual(itemID.count, 32)
             XCTAssertTrue(itemID.hasPrefix("scr_"))
         }
+    }
+
+    func testCommittedInputAudioIsExposedAsAUserItemEvent() throws {
+        var parser = ConversationEventParser()
+
+        let events = parser.consume([
+            "type": "input_audio_buffer.committed",
+            "item_id": "item_client_endpoint"
+        ])
+
+        XCTAssertEqual(
+            events,
+            [
+                .userAudioCommitted(
+                    itemID: try XCTUnwrap(
+                        ConversationProviderItemID("item_client_endpoint")
+                    )
+                )
+            ]
+        )
+    }
+
+    func testInputTranscriptionDeltaIsExposedWithItsItemIdentity() throws {
+        var parser = ConversationEventParser()
+
+        let events = parser.consume([
+            "type": "conversation.item.input_audio_transcription.delta",
+            "item_id": "item_live_transcript",
+            "delta": "你好"
+        ])
+
+        XCTAssertEqual(
+            events,
+            [
+                .userTranscriptionDelta(
+                    ConversationInputTranscriptionDelta(
+                        itemID: try XCTUnwrap(
+                            ConversationProviderItemID("item_live_transcript")
+                        ),
+                        delta: "你好"
+                    )
+                )
+            ]
+        )
+    }
+
+    func testClientEndpointCommandsSendAudioBeforeCommitAndResponse() {
+        let commands: [RealtimeInputCommand] = [
+            .audio(Data([0x01, 0x02])),
+            .commitAndRequest(UUID())
+        ]
+
+        let eventTypes = commands
+            .flatMap(\.payloads)
+            .compactMap { $0["type"] as? String }
+
+        XCTAssertEqual(
+            eventTypes,
+            [
+                "input_audio_buffer.append",
+                "input_audio_buffer.commit",
+                "response.create"
+            ]
+        )
     }
 
     func testScreenSelectionGuideStaysInsideDisplayEdges() {
@@ -257,6 +409,54 @@ final class TalkInteractionTests: XCTestCase {
         XCTAssertEqual(secondUpdate.snapshot.id, firstSession.id)
         XCTAssertEqual(secondUpdate.snapshot.completedResponses, 2)
         XCTAssertEqual(secondUpdate.snapshot.totalTokens, 85)
+
+        let transcriptionUpdate = ledger.recordTranscription(
+            UserTurnTranscriptionUsage(
+                inputTokens: nil,
+                outputTokens: nil,
+                totalTokens: nil,
+                audioSeconds: 60
+            )
+        )
+        XCTAssertTrue(transcriptionUpdate.didRecord)
+        XCTAssertEqual(transcriptionUpdate.costUSD, 0.017, accuracy: 0.000_001)
+        XCTAssertEqual(
+            transcriptionUpdate.snapshot.estimatedCostUSD,
+            secondUpdate.snapshot.estimatedCostUSD + 0.017,
+            accuracy: 0.000_001
+        )
+    }
+
+    func testTalkTranscriptionDurationIsIncludedOnceInDisplayedSessionCost() async throws {
+        let provider = MockConversationProvider()
+        let coordinator = makeConversationCoordinator(
+            provider: provider,
+            audioService: WorkTestAudioService(),
+            responseGrace: .milliseconds(20)
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.isConnected }
+        let itemID = try XCTUnwrap(ConversationProviderItemID("costed_user_turn"))
+        let transcript = ConversationInputTranscription(
+            itemID: itemID,
+            text: "测试",
+            language: "zh",
+            confidence: nil,
+            usage: UserTurnTranscriptionUsage(
+                inputTokens: nil,
+                outputTokens: nil,
+                totalTokens: nil,
+                audioSeconds: 60
+            )
+        )
+        provider.simulate(.userSpeechStarted(itemID: itemID))
+        provider.simulate(.userSpeechStopped(itemID: itemID))
+        provider.simulate(.userTranscriptionCompleted(transcript))
+        provider.simulate(.userTranscriptionCompleted(transcript))
+
+        XCTAssertEqual(coordinator.estimatedCostUSD, 0.017, accuracy: 0.000_001)
+        coordinator.stop()
     }
 
     func testConversationResponseLoopGuardOnlyTripsWithoutANewUserTurn() {
@@ -317,11 +517,83 @@ final class TalkInteractionTests: XCTestCase {
         coordinator.stop()
     }
 
-    func testSpeechStopRequestsOneResponseAfterContinuationGrace() async throws {
+    func testLiveTranscriptReplacesPartialWithFinalAndRejectsOldItemDelta() async throws {
         let provider = MockConversationProvider()
         let coordinator = makeConversationCoordinator(
             provider: provider,
             audioService: WorkTestAudioService(),
+            responseGrace: .seconds(2)
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.isConnected }
+        let firstItemID = try XCTUnwrap(ConversationProviderItemID("live_user_1"))
+        provider.simulate(.userSpeechStarted(itemID: firstItemID))
+        provider.simulate(
+            .userTranscriptionDelta(
+                ConversationInputTranscriptionDelta(itemID: firstItemID, delta: "你")
+            )
+        )
+        provider.simulate(
+            .userTranscriptionDelta(
+                ConversationInputTranscriptionDelta(itemID: firstItemID, delta: "好")
+            )
+        )
+
+        XCTAssertEqual(coordinator.liveTranscript.userText, "你好")
+        XCTAssertFalse(coordinator.liveTranscript.userTextIsFinal)
+        XCTAssertNotNil(coordinator.liveTranscript.firstTextLatencyMilliseconds)
+
+        provider.simulate(.userSpeechStopped(itemID: firstItemID))
+        provider.simulate(
+            .userTranscriptionCompleted(
+                ConversationInputTranscription(
+                    itemID: firstItemID,
+                    text: "你好。",
+                    language: "zh",
+                    confidence: nil,
+                    usage: nil
+                )
+            )
+        )
+        XCTAssertEqual(coordinator.liveTranscript.userText, "你好。")
+        XCTAssertTrue(coordinator.liveTranscript.userTextIsFinal)
+        XCTAssertNotNil(coordinator.liveTranscript.finalizationLatencyMilliseconds)
+
+        let responseID = try XCTUnwrap(ConversationProviderResponseID("live_response_1"))
+        let assistantItemID = try XCTUnwrap(
+            ConversationProviderItemID("live_assistant_1")
+        )
+        let identity = ConversationProviderEventIdentity(
+            responseID: responseID,
+            itemID: assistantItemID
+        )
+        provider.simulate(.assistantResponseStarted(responseID: responseID))
+        provider.simulate(.assistantItemStarted(identity))
+        provider.simulate(.assistantTranscriptDelta(identity: identity, delta: "你好呀"))
+        provider.simulate(.responseCompleted(responseID: responseID, usage: .zero))
+        XCTAssertEqual(coordinator.liveTranscript.assistantText, "你好呀")
+
+        let secondItemID = try XCTUnwrap(ConversationProviderItemID("live_user_2"))
+        provider.simulate(.userSpeechStarted(itemID: secondItemID))
+        XCTAssertEqual(coordinator.liveTranscript.userText, "")
+        XCTAssertEqual(coordinator.liveTranscript.assistantText, "你好呀")
+
+        provider.simulate(
+            .userTranscriptionDelta(
+                ConversationInputTranscriptionDelta(itemID: firstItemID, delta: "迟到")
+            )
+        )
+        XCTAssertEqual(coordinator.liveTranscript.userText, "")
+        coordinator.stop()
+    }
+
+    func testProviderVADSpeechStopUsesAutomaticResponseCreation() async throws {
+        let provider = MockConversationProvider()
+        let audioService = WorkTestAudioService()
+        let coordinator = makeConversationCoordinator(
+            provider: provider,
+            audioService: audioService,
             responseGrace: .milliseconds(20)
         )
 
@@ -331,15 +603,178 @@ final class TalkInteractionTests: XCTestCase {
         provider.simulate(.userSpeechStarted(itemID: itemID))
         provider.simulate(.userSpeechStopped(itemID: itemID))
 
-        await waitUntil { provider.userResponseRequestCount == 1 }
-
-        XCTAssertEqual(provider.userResponseRequestCount, 1)
+        XCTAssertEqual(provider.userResponseRequestCount, 0)
+        XCTAssertEqual(audioService.completedUserTurnEndpointCount, 0)
+        XCTAssertEqual(audioService.assistantPreparationCount, 1)
         XCTAssertEqual(coordinator.state, .assistantPreparing)
         coordinator.stop()
     }
 
-    func testEndpointSilenceExhaustionStopsAStuckUserTurn() async throws {
+    func testProviderVADUsesLocalSpeechOnlyToSuppressOpeningGreeting() async throws {
         let provider = MockConversationProvider()
+        let audioService = WorkTestAudioService()
+        let coordinator = ConversationCoordinator(
+            activationMode: .shortcut,
+            wakeWordProvider: MockWakeWordService(),
+            conversationProvider: provider,
+            audioService: audioService,
+            presentation: InputOverlayConversationPresenter(
+                model: InputOverlayModel(),
+                controller: nil
+            ),
+            openingGreetingDelay: .milliseconds(30),
+            userTurnResponseGrace: .milliseconds(10)
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.isConnected }
+        audioService.onInputGateTransition?(.candidateStarted(interruption: false))
+        audioService.onInputGateTransition?(.speechConfirmed(interruption: false))
+        audioService.onInputGateTransition?(.speechReleased(reason: .stableBackground))
+        audioService.onInputGateTransition?(.endpointSilenceExhausted)
+        try await Task.sleep(for: .milliseconds(80))
+
+        XCTAssertEqual(provider.userResponseRequestCount, 0)
+        XCTAssertEqual(provider.clearedUserAudioCount, 0)
+        XCTAssertEqual(provider.openingGreetingRequestCount, 0)
+        XCTAssertEqual(audioService.lastConfiguredEndpointMode, .providerVAD)
+        XCTAssertEqual(audioService.lastAllowsResponseInterruption, false)
+        XCTAssertTrue(provider.isConnected)
+        coordinator.stop()
+    }
+
+    func testLocalSpeechCancelsOpeningGreetingAlreadyBeingPrepared() async throws {
+        let provider = MockConversationProvider()
+        let audioService = WorkTestAudioService()
+        let coordinator = ConversationCoordinator(
+            activationMode: .shortcut,
+            wakeWordProvider: MockWakeWordService(),
+            conversationProvider: provider,
+            audioService: audioService,
+            presentation: InputOverlayConversationPresenter(
+                model: InputOverlayModel(),
+                controller: nil
+            ),
+            openingGreetingDelay: .milliseconds(10),
+            userTurnResponseGrace: .milliseconds(10)
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.openingGreetingRequestCount == 1 }
+        audioService.onInputGateTransition?(.speechConfirmed(interruption: false))
+
+        XCTAssertEqual(provider.assistantCancellationCount, 1)
+        XCTAssertEqual(coordinator.state, .listening)
+        XCTAssertTrue(provider.isConnected)
+        coordinator.stop()
+    }
+
+    func testClientGateCreatesOneResponseWithoutProviderSpeechEvents() async {
+        let provider = MockConversationProvider(endpointMode: .clientGate)
+        let audioService = WorkTestAudioService()
+        let coordinator = makeConversationCoordinator(
+            provider: provider,
+            audioService: audioService,
+            responseGrace: .milliseconds(20)
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.isConnected }
+
+        audioService.onInputGateTransition?(.speechConfirmed(interruption: false))
+        XCTAssertEqual(coordinator.state, .userSpeaking)
+        audioService.onInputGateTransition?(.speechReleased(reason: .acousticSilence))
+
+        await waitUntil { provider.userResponseRequestCount == 1 }
+        XCTAssertEqual(audioService.completedUserTurnEndpointCount, 1)
+        XCTAssertEqual(coordinator.state, .assistantPreparing)
+        XCTAssertTrue(provider.isConnected)
+        coordinator.stop()
+    }
+
+    func testClientGateContinuationCancelsTheEarlyResponse() async throws {
+        let provider = MockConversationProvider(endpointMode: .clientGate)
+        let audioService = WorkTestAudioService()
+        let coordinator = makeConversationCoordinator(
+            provider: provider,
+            audioService: audioService,
+            responseGrace: .milliseconds(80)
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.isConnected }
+        audioService.onInputGateTransition?(.speechConfirmed(interruption: false))
+        audioService.onInputGateTransition?(.speechReleased(reason: .acousticSilence))
+        try await Task.sleep(for: .milliseconds(20))
+        audioService.onInputGateTransition?(.speechConfirmed(interruption: false))
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(provider.userResponseRequestCount, 0)
+        XCTAssertEqual(audioService.completedUserTurnEndpointCount, 0)
+        XCTAssertEqual(coordinator.state, .userSpeaking)
+
+        audioService.onInputGateTransition?(.speechReleased(reason: .acousticSilence))
+        await waitUntil { provider.userResponseRequestCount == 1 }
+        XCTAssertEqual(audioService.completedUserTurnEndpointCount, 1)
+        coordinator.stop()
+    }
+
+    func testClientGateReplaysSpeechAfterScreenContextAttachment() async {
+        let provider = MockConversationProvider(endpointMode: .clientGate)
+        let audioService = WorkTestAudioService()
+        let captureService = TalkTestScreenRegionCaptureService()
+        let selectionController = TalkTestScreenRegionSelectionController()
+        let coordinator = ConversationCoordinator(
+            activationMode: .shortcut,
+            wakeWordProvider: MockWakeWordService(),
+            conversationProvider: provider,
+            audioService: audioService,
+            screenCaptureService: captureService,
+            screenSelectionController: selectionController,
+            presentation: InputOverlayConversationPresenter(
+                model: InputOverlayModel(),
+                controller: nil
+            ),
+            userTurnResponseGrace: .milliseconds(20)
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.isConnected }
+        coordinator.beginScreenRegionSelection()
+        selectionController.complete(
+            ScreenRegionSelection(
+                displayID: 7,
+                screenFrame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+                selectedFrame: CGRect(x: 100, y: 200, width: 300, height: 80)
+            )
+        )
+        XCTAssertEqual(coordinator.state, .capturingScreenRegion)
+
+        audioService.onInputChunk?(
+            AudioChunk(
+                pcm16: Data(repeating: 1, count: 4_800),
+                sampleRate: 24_000,
+                channelCount: 1,
+                frameCount: 2_400,
+                normalizedLevel: 0.5
+            )
+        )
+        audioService.onInputGateTransition?(.speechConfirmed(interruption: false))
+        audioService.onInputGateTransition?(.speechReleased(reason: .acousticSilence))
+
+        XCTAssertEqual(provider.appendedChunkCount, 0)
+        XCTAssertEqual(provider.userResponseRequestCount, 0)
+        await waitUntil { provider.screenContexts.count == 1 }
+        await waitUntil { provider.userResponseRequestCount == 1 }
+
+        XCTAssertEqual(provider.appendedChunkCount, 1)
+        XCTAssertEqual(audioService.completedUserTurnEndpointCount, 1)
+        XCTAssertEqual(coordinator.state, .assistantPreparing)
+        coordinator.stop()
+    }
+
+    func testEndpointSilenceExhaustionRecoversWithoutEndingConversation() async throws {
+        let provider = MockConversationProvider(endpointMode: .clientGate)
         let audioService = WorkTestAudioService()
         let coordinator = makeConversationCoordinator(
             provider: provider,
@@ -356,40 +791,43 @@ final class TalkInteractionTests: XCTestCase {
 
         audioService.onInputGateTransition?(.endpointSilenceExhausted)
 
-        XCTAssertEqual(coordinator.state, .ending)
-        XCTAssertFalse(provider.isConnected)
-        XCTAssertFalse(coordinator.isProviderConnected)
+        await waitUntil { provider.clearedUserAudioCount == 1 }
+        XCTAssertEqual(coordinator.state, .listening)
+        XCTAssertTrue(provider.isConnected)
+        XCTAssertTrue(coordinator.isProviderConnected)
+        XCTAssertTrue(coordinator.isConversationActive)
+        XCTAssertEqual(audioService.resetUserInputCount, 1)
+        coordinator.stop()
     }
 
     func testSpeechResumeWithinGraceDoesNotCreateAnEarlyResponse() async throws {
-        let provider = MockConversationProvider()
+        let provider = MockConversationProvider(endpointMode: .clientGate)
+        let audioService = WorkTestAudioService()
         let coordinator = makeConversationCoordinator(
             provider: provider,
-            audioService: WorkTestAudioService(),
+            audioService: audioService,
             responseGrace: .milliseconds(60)
         )
 
         coordinator.startConversationFromShortcut()
         await waitUntil { provider.isConnected }
-        let firstItemID = try XCTUnwrap(ConversationProviderItemID("user_first_segment"))
-        let secondItemID = try XCTUnwrap(ConversationProviderItemID("user_second_segment"))
-        provider.simulate(.userSpeechStarted(itemID: firstItemID))
-        provider.simulate(.userSpeechStopped(itemID: firstItemID))
+        audioService.onInputGateTransition?(.speechConfirmed(interruption: false))
+        audioService.onInputGateTransition?(.speechReleased(reason: .acousticSilence))
         try await Task.sleep(for: .milliseconds(20))
-        provider.simulate(.userSpeechStarted(itemID: secondItemID))
+        audioService.onInputGateTransition?(.speechConfirmed(interruption: false))
         try await Task.sleep(for: .milliseconds(80))
 
         XCTAssertEqual(provider.userResponseRequestCount, 0)
         XCTAssertEqual(coordinator.state, .userSpeaking)
 
-        provider.simulate(.userSpeechStopped(itemID: secondItemID))
+        audioService.onInputGateTransition?(.speechReleased(reason: .acousticSilence))
         await waitUntil { provider.userResponseRequestCount == 1 }
         XCTAssertEqual(provider.userResponseRequestCount, 1)
         coordinator.stop()
     }
 
     func testSpeechDuringResponsePreparationCancelsWithoutStalePlaybackTruncation() async throws {
-        let provider = MockConversationProvider()
+        let provider = MockConversationProvider(allowsResponseInterruption: true)
         let audioService = WorkTestAudioService()
         audioService.stopAssistantPlaybackResult = 6_250
         let coordinator = makeConversationCoordinator(
@@ -437,7 +875,7 @@ final class TalkInteractionTests: XCTestCase {
         )
         provider.simulate(.userSpeechStarted(itemID: firstItemID))
         provider.simulate(.userSpeechStopped(itemID: firstItemID))
-        await waitUntil { provider.userResponseRequestCount == 1 }
+        await waitUntil { coordinator.state == .assistantPreparing }
 
         let noiseItemID = try XCTUnwrap(
             ConversationProviderItemID("unconfirmed_preparation_noise")
@@ -447,7 +885,7 @@ final class TalkInteractionTests: XCTestCase {
 
         XCTAssertEqual(provider.assistantCancellationCount, 0)
         XCTAssertEqual(provider.discardedUserAudioItemIDs, [noiseItemID.rawValue])
-        XCTAssertEqual(provider.userResponseRequestCount, 1)
+        XCTAssertEqual(provider.userResponseRequestCount, 0)
         XCTAssertEqual(audioService.assistantPreparationCount, 1)
         XCTAssertEqual(coordinator.state, .assistantPreparing)
         coordinator.stop()
@@ -482,7 +920,7 @@ final class TalkInteractionTests: XCTestCase {
     }
 
     func testLateCancelledResponseDoesNotCancelTheNextTurnRequest() async throws {
-        let provider = MockConversationProvider()
+        let provider = MockConversationProvider(endpointMode: .clientGate)
         let audioService = WorkTestAudioService()
         let coordinator = makeConversationCoordinator(
             provider: provider,
@@ -492,19 +930,13 @@ final class TalkInteractionTests: XCTestCase {
 
         coordinator.startConversationFromShortcut()
         await waitUntil { provider.isConnected }
-        let firstItemID = try XCTUnwrap(
-            ConversationProviderItemID("user_before_late_response")
-        )
-        provider.simulate(.userSpeechStarted(itemID: firstItemID))
-        provider.simulate(.userSpeechStopped(itemID: firstItemID))
+        audioService.onInputGateTransition?(.speechConfirmed(interruption: false))
+        audioService.onInputGateTransition?(.speechReleased(reason: .acousticSilence))
         await waitUntil { provider.userResponseRequestCount == 1 }
 
-        let secondItemID = try XCTUnwrap(
-            ConversationProviderItemID("user_after_late_response")
-        )
         audioService.hasConfirmedInterruption = true
-        provider.simulate(.userSpeechStarted(itemID: secondItemID))
-        provider.simulate(.userSpeechStopped(itemID: secondItemID))
+        audioService.onInputGateTransition?(.speechConfirmed(interruption: true))
+        audioService.onInputGateTransition?(.speechReleased(reason: .acousticSilence))
         provider.simulate(
             .assistantResponseStarted(
                 responseID: ConversationProviderResponseID("cancelled_response_arrived_late")
@@ -541,13 +973,68 @@ final class TalkInteractionTests: XCTestCase {
         let noiseItemID = try XCTUnwrap(ConversationProviderItemID("playback_noise"))
         provider.simulate(.userSpeechStarted(itemID: noiseItemID))
         provider.simulate(.userSpeechStopped(itemID: noiseItemID))
+        provider.simulate(.userAudioCommitted(itemID: noiseItemID))
+        let unsolicitedResponseID = try XCTUnwrap(
+            ConversationProviderResponseID("playback_noise_response")
+        )
+        let unsolicitedIdentity = ConversationProviderEventIdentity(
+            responseID: unsolicitedResponseID,
+            itemID: ConversationProviderItemID("playback_noise_reply")
+        )
+        provider.simulate(.assistantResponseStarted(responseID: unsolicitedResponseID))
+        provider.simulate(.assistantItemStarted(unsolicitedIdentity))
+        provider.simulate(
+            .assistantAudio(identity: unsolicitedIdentity, data: Data([2, 3]))
+        )
+        provider.simulate(.responseCancelled(responseID: unsolicitedResponseID))
         try await Task.sleep(for: .milliseconds(50))
 
         XCTAssertEqual(provider.discardedUserAudioItemIDs, [noiseItemID.rawValue])
         XCTAssertEqual(provider.userResponseRequestCount, 0)
-        XCTAssertEqual(provider.assistantCancellationCount, 0)
+        XCTAssertEqual(provider.assistantCancellationCount, 1)
         XCTAssertTrue(provider.truncations.isEmpty)
         XCTAssertEqual(coordinator.state, .assistantSpeaking)
+        coordinator.stop()
+    }
+
+    func testExpiredSuppressedResponseRejectionDoesNotCancelALaterReply() async throws {
+        let provider = MockConversationProvider()
+        let audioService = WorkTestAudioService()
+        let coordinator = makeConversationCoordinator(
+            provider: provider,
+            audioService: audioService,
+            responseGrace: .milliseconds(20)
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.isConnected }
+        let activeResponseID = try XCTUnwrap(
+            ConversationProviderResponseID("active_response_before_expiry")
+        )
+        let activeIdentity = ConversationProviderEventIdentity(
+            responseID: activeResponseID,
+            itemID: ConversationProviderItemID("active_item_before_expiry")
+        )
+        provider.simulate(.assistantResponseStarted(responseID: activeResponseID))
+        provider.simulate(.assistantItemStarted(activeIdentity))
+        provider.simulate(.assistantAudio(identity: activeIdentity, data: Data([0, 1])))
+
+        let noiseItemID = try XCTUnwrap(
+            ConversationProviderItemID("expired_playback_noise")
+        )
+        provider.simulate(.userSpeechStarted(itemID: noiseItemID))
+        provider.simulate(.userSpeechStopped(itemID: noiseItemID))
+        coordinator.pendingSuppressedResponseRejections[noiseItemID] = .distantPast
+        provider.simulate(.responseCompleted(responseID: activeResponseID, usage: .zero))
+        audioService.onPlaybackFinished?()
+
+        let laterResponseID = try XCTUnwrap(
+            ConversationProviderResponseID("legitimate_later_response")
+        )
+        provider.simulate(.assistantResponseStarted(responseID: laterResponseID))
+
+        XCTAssertEqual(provider.assistantCancellationCount, 0)
+        XCTAssertEqual(coordinator.state, .assistantPreparing)
         coordinator.stop()
     }
 
@@ -583,7 +1070,7 @@ final class TalkInteractionTests: XCTestCase {
     }
 
     func testConfirmedBargeInResetsAutonomousResponseGuard() async throws {
-        let provider = MockConversationProvider()
+        let provider = MockConversationProvider(allowsResponseInterruption: true)
         let audioService = WorkTestAudioService()
         let coordinator = ConversationCoordinator(
             activationMode: .shortcut,
@@ -717,7 +1204,6 @@ final class TalkInteractionTests: XCTestCase {
 
         provider.simulate(.userSpeechStarted(itemID: userItemID))
         provider.simulate(.userSpeechStopped(itemID: userItemID))
-        await waitUntil { provider.userResponseRequestCount == 1 }
         provider.simulate(.assistantResponseStarted(responseID: responseID))
         provider.simulate(.assistantItemStarted(identity))
         provider.simulate(.assistantAudio(identity: identity, data: Data([0, 1])))
@@ -737,7 +1223,7 @@ final class TalkInteractionTests: XCTestCase {
         let expectedEvents = [
             "turn.user_speech_started",
             "turn.user_speech_stopped",
-            "response.requested",
+            "response.provider_managed",
             "response.started",
             "assistant.item_started",
             "audio.playback_started",
@@ -759,7 +1245,7 @@ final class TalkInteractionTests: XCTestCase {
         )
         assertDiagnosticAttribute(
             "endpoint_to_request_ms",
-            event: "response.requested",
+            event: "response.provider_managed",
             records: records
         )
         assertDiagnosticAttribute(
@@ -920,6 +1406,21 @@ final class TalkInteractionTests: XCTestCase {
         XCTAssertEqual(correlator.activeTurnID, currentTurn.turnID)
     }
 
+    func testCommittedProviderItemAttachesToClientOwnedTurn() throws {
+        var correlator = ConversationTurnCorrelator()
+        correlator.beginSession(ConversationSessionID())
+        let localTurn = try XCTUnwrap(correlator.beginUserTurn(providerItemID: nil))
+        let itemID = try XCTUnwrap(ConversationProviderItemID("item_after_commit"))
+
+        let attached = try XCTUnwrap(
+            correlator.attachProviderUserItemID(itemID, to: localTurn.turnID)
+        )
+
+        XCTAssertEqual(attached.turnID, localTurn.turnID)
+        XCTAssertEqual(attached.providerUserItemID, itemID)
+        XCTAssertEqual(correlator.snapshot(for: itemID)?.turnID, localTurn.turnID)
+    }
+
     func testLateOldResponseStartDoesNotReactivatePreviousTurn() throws {
         let oldResponseID = try XCTUnwrap(ConversationProviderResponseID("response_old"))
         let oldIdentity = ConversationProviderEventIdentity(
@@ -1070,16 +1571,21 @@ final class TalkInteractionTests: XCTestCase {
 
         coordinator.startConversationFromShortcut()
         await waitUntil { provider.isConnected }
+        let responseID = ConversationProviderResponseID("response_write_codex")
+        provider.simulate(.assistantResponseStarted(responseID: responseID))
         provider.simulate(
             .toolCall(
                 ConversationToolCall(
                     callID: ConversationToolCallID("call_write_codex")!,
                     name: ConversationActionBridge.focusedInputWriteToolName,
                     argumentsJSON: #"{"text":"1、2、3、4","application":"Codex"}"#,
-                    responseID: ConversationProviderResponseID("response_write_codex")
+                    responseID: responseID
                 )
             )
         )
+        provider.simulate(.responseCompleted(responseID: responseID, usage: .zero))
+
+        XCTAssertEqual(coordinator.state, .assistantPreparing)
 
         await waitUntil { provider.toolOutputs.count == 1 }
 
@@ -1087,13 +1593,110 @@ final class TalkInteractionTests: XCTestCase {
         XCTAssertEqual(executor.proposals[0].target, "Codex")
         XCTAssertTrue(provider.toolOutputs[0].output.contains(#""status":"succeeded""#))
         XCTAssertTrue(provider.toolOutputs[0].createsResponse)
+        XCTAssertEqual(coordinator.state, .assistantPreparing)
         XCTAssertTrue(provider.isConnected)
         XCTAssertTrue(coordinator.isConversationActive)
         coordinator.stop()
     }
 
-    func testCompletedWorkWaitsForUserAndRetriesAfterInterruption() async throws {
+    func testPlaybackFinishingBeforeToolResolutionKeepsAssistantPreparing() async {
         let provider = MockConversationProvider()
+        let executor = ControlledTalkTestLocalActionExecutor()
+        let audioService = WorkTestAudioService()
+        let coordinator = ConversationCoordinator(
+            activationMode: .shortcut,
+            wakeWordProvider: MockWakeWordService(),
+            conversationProvider: provider,
+            audioService: audioService,
+            presentation: InputOverlayConversationPresenter(
+                model: InputOverlayModel(),
+                controller: nil
+            ),
+            actionBridge: ConversationActionBridge(executor: executor)
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.isConnected }
+
+        let responseID = ConversationProviderResponseID("response_audio_and_tool")
+        let identity = ConversationProviderEventIdentity(
+            responseID: responseID,
+            itemID: ConversationProviderItemID("item_audio_and_tool")
+        )
+        provider.simulate(.assistantResponseStarted(responseID: responseID))
+        provider.simulate(.assistantItemStarted(identity))
+        provider.simulate(.assistantAudio(identity: identity, data: Data([0, 0])))
+        provider.simulate(
+            .toolCall(
+                ConversationToolCall(
+                    callID: ConversationToolCallID("call_audio_and_tool")!,
+                    name: ConversationActionBridge.focusedInputWriteToolName,
+                    argumentsJSON: #"{"text":"测试"}"#,
+                    responseID: responseID
+                )
+            )
+        )
+        provider.simulate(.responseCompleted(responseID: responseID, usage: .zero))
+
+        XCTAssertEqual(coordinator.state, .assistantSpeaking)
+        audioService.onPlaybackFinished?()
+        XCTAssertEqual(coordinator.state, .assistantPreparing)
+
+        executor.resolve()
+        await waitUntil { provider.toolOutputs.count == 1 }
+
+        XCTAssertEqual(coordinator.state, .assistantPreparing)
+        XCTAssertTrue(provider.toolOutputs[0].createsResponse)
+        XCTAssertTrue(coordinator.isConversationActive)
+
+        let followUpResponseID = ConversationProviderResponseID(
+            "response_after_audio_and_tool"
+        )
+        provider.simulate(.assistantResponseStarted(responseID: followUpResponseID))
+        provider.simulate(
+            .responseCompleted(responseID: followUpResponseID, usage: .zero)
+        )
+        XCTAssertEqual(coordinator.state, .listening)
+        coordinator.stop()
+    }
+
+    func testPlaybackFinishingBeforeResponseCompletionReturnsToListening() async {
+        let provider = MockConversationProvider()
+        let audioService = WorkTestAudioService()
+        let coordinator = ConversationCoordinator(
+            activationMode: .shortcut,
+            wakeWordProvider: MockWakeWordService(),
+            conversationProvider: provider,
+            audioService: audioService,
+            presentation: InputOverlayConversationPresenter(
+                model: InputOverlayModel(),
+                controller: nil
+            )
+        )
+
+        coordinator.startConversationFromShortcut()
+        await waitUntil { provider.isConnected }
+
+        let responseID = ConversationProviderResponseID("response_audio_first")
+        let identity = ConversationProviderEventIdentity(
+            responseID: responseID,
+            itemID: ConversationProviderItemID("item_audio_first")
+        )
+        provider.simulate(.assistantResponseStarted(responseID: responseID))
+        provider.simulate(.assistantItemStarted(identity))
+        provider.simulate(.assistantAudio(identity: identity, data: Data([0, 0])))
+
+        audioService.onPlaybackFinished?()
+        XCTAssertEqual(coordinator.state, .assistantPreparing)
+
+        provider.simulate(.responseCompleted(responseID: responseID, usage: .zero))
+        XCTAssertEqual(coordinator.state, .listening)
+        XCTAssertTrue(coordinator.isConversationActive)
+        coordinator.stop()
+    }
+
+    func testCompletedWorkWaitsForUserAndRetriesAfterInterruption() async throws {
+        let provider = MockConversationProvider(allowsResponseInterruption: true)
         let workService = ControlledWorkService()
         let audioService = WorkTestAudioService()
         let coordinator = makeWorkCoordinator(
@@ -1359,6 +1962,36 @@ private final class TalkTestLocalActionExecutor: LocalActionExecuting {
 }
 
 @MainActor
+private final class ControlledTalkTestLocalActionExecutor: LocalActionExecuting {
+    private var isResolved = false
+
+    func lockSessionTarget(_ target: FocusedInputTarget?) {}
+
+    func execute(_ proposal: ActionProposal) async -> ActionReceipt {
+        while !isResolved, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return ActionReceipt(
+            id: .make(),
+            workID: proposal.workID,
+            actionID: proposal.id,
+            status: .succeeded,
+            targetRevision: "target_test",
+            observedResult: "目标输入框的文本变化已复验",
+            undoToken: "system_undo:test",
+            executedAt: Date(),
+            error: nil
+        )
+    }
+
+    func resolve() {
+        isResolved = true
+    }
+
+    func clearSessionTarget() {}
+}
+
+@MainActor
 private final class WorkTestAudioService: ConversationAudioServicing {
     var onInputChunk: ((AudioChunk) -> Void)?
     var onInputLevels: ((ConversationAudioLevels) -> Void)?
@@ -1371,8 +2004,21 @@ private final class WorkTestAudioService: ConversationAudioServicing {
     var stopAssistantPlaybackResult = 0
     private(set) var stopAssistantPlaybackCount = 0
     private(set) var assistantPreparationCount = 0
+    private(set) var completedUserTurnEndpointCount = 0
+    private(set) var resetUserInputCount = 0
+    private(set) var lastConfiguredEndpointMode: ConversationEndpointMode?
+    private(set) var lastAllowsResponseInterruption: Bool?
 
+    func configureInputForwarding(
+        endpointMode: ConversationEndpointMode,
+        allowsResponseInterruption: Bool
+    ) {
+        lastConfiguredEndpointMode = endpointMode
+        lastAllowsResponseInterruption = allowsResponseInterruption
+    }
     func start() async throws { isRunning = true }
+    func completeUserTurnEndpoint() { completedUserTurnEndpointCount += 1 }
+    func resetUserInput() { resetUserInputCount += 1 }
     func prepareForAssistantResponse() { assistantPreparationCount += 1 }
     func beginAssistantResponse() {}
     func enqueueAssistantAudio(_ data: Data) {}
@@ -1382,6 +2028,45 @@ private final class WorkTestAudioService: ConversationAudioServicing {
         return stopAssistantPlaybackResult
     }
     func stop() { isRunning = false }
+}
+
+@MainActor
+private final class TalkTestScreenRegionCaptureService: ScreenRegionCapturing {
+    var isAuthorized = true
+
+    func requestAuthorization() -> Bool { isAuthorized }
+
+    func capture(_ selection: ScreenRegionSelection) async throws -> ConversationImage {
+        ConversationImage(
+            data: Data([0xFF, 0xD8, 0xFF, 0xD9]),
+            mimeType: "image/jpeg",
+            pixelWidth: 300,
+            pixelHeight: 80
+        )
+    }
+
+    func openPrivacySettings() {}
+}
+
+@MainActor
+private final class TalkTestScreenRegionSelectionController: ScreenRegionSelecting {
+    var onSelection: ((ScreenRegionSelection) -> Void)?
+    var onCancel: (() -> Void)?
+    private(set) var isSelecting = false
+
+    func beginSelection() { isSelecting = true }
+
+    func cancelSelection() {
+        guard isSelecting else { return }
+        isSelecting = false
+        onCancel?()
+    }
+
+    func complete(_ selection: ScreenRegionSelection) {
+        guard isSelecting else { return }
+        isSelecting = false
+        onSelection?(selection)
+    }
 }
 
 @MainActor

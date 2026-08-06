@@ -458,7 +458,7 @@ final class ConversationWorkBridge {
             output: encodeOutput([
                 "status": "transcript_unavailable",
                 "draft_id": draftID.rawValue,
-                "message": "这一轮没有可核对的最终用户转写，因此没有创建后台任务。请重新说出完整任务；在最终转写 Provider 启用前，Friday 只能继续普通对话。"
+                "message": "这一轮没有可核对的最终用户转写，因此没有创建后台任务。请重新说出完整任务；在最终转写 Provider 启用前，Olli 只能继续普通对话。"
             ]),
             workToObserve: nil
         )
@@ -605,17 +605,17 @@ private enum ToolError: LocalizedError {
         case .noRecentDraft:
             return "当前对话里没有等待确认的任务草稿。"
         case .unmatchedTurn:
-            return "Friday 无法确认这次请求属于哪一轮对话，因此没有执行。"
+            return "Olli 无法确认这次请求属于哪一轮对话，因此没有执行。"
         case .missingSourceTranscript:
             return "原任务没有可靠的最终用户转写，因此不能提交。请重新说出完整任务。"
         case .unverifiedConfirmation:
-            return "Friday 没有从最终用户转写中确认到‘确认提交’，因此没有创建任务。"
+            return "Olli 没有从最终用户转写中确认到‘确认提交’，因此没有创建任务。"
         case .discardedDraft:
             return "这个任务草稿已经取消。"
         case .alreadySubmittedDraft:
             return "这个任务草稿已经提交；如需停止，请取消对应的后台任务。"
         case .unsupportedTool:
-            return "Friday 暂不支持这个任务操作。"
+            return "Olli 暂不支持这个任务操作。"
         }
     }
 }

@@ -1,11 +1,11 @@
-// 功能：定义 Friday 主工作台与灵动岛共享的只读运行状态快照。
+// 功能：定义 Olli 主工作台与灵动岛共享的只读运行状态快照。
 // 职责：承载服务、模型、用量、权限、恢复结果和当前语音活动的可展示字段，并提供零费用界面预览数据。
 // 边界：不主动读取权限、网络或音频状态，不包含 API Key、完整诊断、持久化历史或模型内部字段。
 
 import Foundation
 
 struct AppDashboardSnapshot: Equatable {
-    var status = "正在检查 Friday"
+    var status = "正在检查 Olli"
     var model = "--"
     var serviceLabel = "正在检查"
     var serviceAvailable = false

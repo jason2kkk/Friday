@@ -1,744 +1,806 @@
-// 功能：提供 Friday 独立主工作台，让用户在类 Flow 的原生浅色界面中集中使用转写、监控、权限、结果和设置。
-// 职责：使用 NavigationSplitView 组织全高平面侧栏和右侧圆角内容画布，消费共享状态快照并把用户命令转发给应用级工作流。
-// 边界：视图不直接读取系统权限、访问网络、管理凭证或控制音频设备，也不持久化用户内容或伪造历史记录。
+// 功能：展示 Olli 灵动岛的主页与设置形态，让用户查看状态并执行所有常用操作。
+// 职责：根据 InputOverlayModel 呈现快捷操作、服务、权限、用量、最近结果和纵向设置菜单，并转发页面切换与业务命令。
+// 边界：视图只负责展示和事件转发，不直接读取系统权限、访问网络、管理凭证或控制音频设备。
 
 import SwiftUI
 
-private enum WorkspaceSection: String, CaseIterable, Identifiable {
-    case overview = "转写"
-    case monitoring = "运行监控"
-    case settings = "设置"
-
-    var id: Self { self }
-
-    var iconAsset: String {
-        switch self {
-        case .overview: return "麦克风图标"
-        case .monitoring: return "处理器图标"
-        case .settings: return "设置图标"
+private extension View {
+    func solidModule(cornerRadius: CGFloat = 20) -> some View {
+        background {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(Color(red: 0.027, green: 0.027, blue: 0.027))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(.white.opacity(0.2), lineWidth: 1)
         }
     }
-
-    static var configuredPreview: WorkspaceSection {
-        let preview = ProcessInfo.processInfo.environment["FRIDAY_WORKSPACE_PREVIEW"]?.lowercased()
-        if preview?.hasPrefix("monitoring") == true { return .monitoring }
-        if preview?.hasPrefix("settings") == true { return .settings }
-        return .overview
-    }
-}
-
-enum WorkspacePalette {
-    static let chrome = Color(red: 0.958, green: 0.956, blue: 0.948)
-    static let canvas = Color(red: 0.995, green: 0.994, blue: 0.991)
-    static let selection = Color(red: 0.914, green: 0.906, blue: 0.886)
-    static let module = Color(red: 0.973, green: 0.970, blue: 0.960)
-    static let line = Color.black.opacity(0.09)
-    static let ink = Color(red: 0.085, green: 0.082, blue: 0.090)
-    static let muted = Color(red: 0.38, green: 0.37, blue: 0.39)
-    static let accent = Color(red: 1.0, green: 0.61, blue: 0.24)
-    static let hero = Color(red: 0.075, green: 0.078, blue: 0.087)
-}
-
-enum WorkspaceLayout {
-    static let sidebarWidth: CGFloat = 204
-    static let pagePadding: CGFloat = 26
-    static let canvasCornerRadius: CGFloat = 20
-    static let moduleCornerRadius: CGFloat = 12
 }
 
 struct ContentView: View {
     @ObservedObject var model: InputOverlayModel
-    @State private var selectedSection = WorkspaceSection.configuredPreview
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-                .navigationSplitViewColumnWidth(
-                    min: 184,
-                    ideal: WorkspaceLayout.sidebarWidth,
-                    max: 228
-                )
-        } detail: {
-            detailCanvas
-                .padding(.top, 12)
-                .padding(.trailing, 12)
-                .padding(.bottom, 12)
-        }
-        .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 760, minHeight: 560)
-        .background(WorkspacePalette.chrome)
-        .tint(WorkspacePalette.ink)
-        .preferredColorScheme(.light)
-    }
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            brand
-
-            VStack(spacing: 4) {
-                navigationRow(.overview)
-                navigationRow(.monitoring)
-            }
-
-            Spacer(minLength: 16)
-            sidebarServiceCard
-            Divider()
-                .overlay(WorkspacePalette.line)
-                .padding(.vertical, 10)
-            navigationRow(.settings)
-                .padding(.bottom, 10)
-        }
-        .padding(.horizontal, 12)
-        .background(WorkspacePalette.chrome)
-    }
-
-    private var brand: some View {
-        HStack(spacing: 10) {
-            templateIcon(
-                "波形图标",
-                size: 30,
-                color: WorkspacePalette.ink
-            )
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Friday")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(WorkspacePalette.ink)
-                Text("Mac AI 助手")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(WorkspacePalette.muted)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 86)
-    }
-
-    private func navigationRow(_ section: WorkspaceSection) -> some View {
-        Button {
-            selectedSection = section
-        } label: {
-            HStack(spacing: 11) {
-                templateIcon(
-                    section.iconAsset,
-                    size: 20,
-                    color: selectedSection == section ? WorkspacePalette.ink : WorkspacePalette.muted
-                )
-                Text(section.rawValue)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 42)
-            .contentShape(Rectangle())
-            .background(
-                selectedSection == section ? WorkspacePalette.selection : Color.clear,
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selectedSection == section ? .isSelected : [])
-    }
-
-    private var sidebarServiceCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 7, height: 7)
-                    .shadow(color: statusColor.opacity(0.42), radius: 4)
-                Text(model.dashboard.serviceLabel)
-                    .font(.system(size: 11, weight: .semibold))
-                    .lineLimit(2)
-                Spacer(minLength: 0)
-            }
-
-            Text(model.dashboard.model)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(WorkspacePalette.muted)
-                .lineLimit(1)
-
-            Button {
-                model.onRefresh?()
-            } label: {
-                HStack(spacing: 7) {
-                    templateIcon("刷新图标", size: 14, color: WorkspacePalette.ink)
-                    Text("刷新状态")
-                        .font(.system(size: 10, weight: .semibold))
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .background(
-                    Color.white.opacity(0.72),
-                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                )
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(13)
-        .background(
-            Color.white.opacity(0.48),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(WorkspacePalette.line, lineWidth: 1)
-        }
-    }
-
-    private var detailCanvas: some View {
-        Group {
-            switch selectedSection {
-            case .overview:
-                overviewPage
-            case .monitoring:
-                monitoringPage
+        ZStack(alignment: .top) {
+            switch model.expandedPage {
+            case .dashboard:
+                dashboardPage
+                    .transition(.opacity)
             case .settings:
                 settingsPage
+                    .transition(.opacity)
             }
         }
+        .foregroundStyle(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(WorkspacePalette.canvas)
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: WorkspaceLayout.canvasCornerRadius,
-                style: .continuous
-            )
-        )
-        .overlay {
-            RoundedRectangle(
-                cornerRadius: WorkspaceLayout.canvasCornerRadius,
-                style: .continuous
-            )
-            .strokeBorder(WorkspacePalette.line, lineWidth: 1)
-        }
+        .animation(.easeInOut(duration: 0.16), value: model.expandedPage)
     }
 
-    private var overviewPage: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 22) {
-                overviewHeader
+    private var dashboardPage: some View {
+        VStack(spacing: 0) {
+            dashboardHeader
+            sectionDivider
 
-                HStack(alignment: .top, spacing: 14) {
-                    heroPanel
-                    runSummary
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 10) {
+                    presentedMessage
+                    quickActions
+                    usageMonitor
+                    attentionRows
+                    recentResult
                 }
-
-                activitySection
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
             }
-            .padding(WorkspaceLayout.pagePadding)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private var overviewHeader: some View {
-        HStack(spacing: 10) {
-            Text("欢迎回来，按下")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(WorkspacePalette.ink)
-                .lineLimit(1)
+    private var dashboardHeader: some View {
+        HStack(spacing: 11) {
+            Image("灵动岛紧凑图标")
+                .renderingMode(.original)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 28, height: 28)
 
-            Text("fn")
-                .font(.system(size: 17, weight: .heavy, design: .monospaced))
-                .foregroundStyle(WorkspacePalette.ink)
-                .padding(.horizontal, 8)
-                .frame(height: 32)
-                .background(
-                    WorkspacePalette.accent,
-                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(WorkspacePalette.ink, lineWidth: 1.5)
-                }
-
-            Text("开始转写")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(WorkspacePalette.ink)
-                .lineLimit(1)
-
-            Spacer(minLength: 8)
-            iconButton(
-                assetName: "刷新图标",
-                help: "刷新 Friday 状态",
-                action: { model.onRefresh?() }
-            )
-        }
-    }
-
-    private var heroPanel: some View {
-        ZStack {
-            RoundedRectangle(
-                cornerRadius: WorkspaceLayout.moduleCornerRadius,
-                style: .continuous
-            )
-            .fill(WorkspacePalette.hero)
-
-            HeroSignalPattern()
-                .clipShape(
-                    RoundedRectangle(
-                        cornerRadius: WorkspaceLayout.moduleCornerRadius,
-                        style: .continuous
-                    )
-                )
-
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(model.dashboard.status)
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(.white)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Olli")
+                    .font(.system(size: 16, weight: .semibold))
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 5, height: 5)
+                    Text(friendlyHeaderStatus)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.5))
                         .lineLimit(1)
+                }
+            }
 
-                    Text(currentStatusDetail)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.68))
-                        .lineLimit(3)
-                        .padding(.top, 6)
+            Spacer(minLength: 12)
 
-                    Spacer(minLength: 10)
+            headerButton(
+                assetName: "展开图标",
+                help: "打开 Olli",
+                accessibilityLabel: "打开 Olli 窗口",
+                action: { model.onOpenWorkspace?() }
+            )
 
-                    HStack(spacing: 8) {
-                        heroActionButton(
-                            title: model.dashboard.isDictationActive ? "结束转写" : "开始转写",
-                            assetName: model.dashboard.isDictationActive ? "停止图标" : "文字图标",
-                            isPrimary: true,
-                            action: { model.onToggleDictation?() }
+            headerButton(
+                assetName: "设置图标",
+                rendersOriginal: true,
+                help: "设置",
+                accessibilityLabel: "打开 Olli 设置",
+                action: { model.onPresentSettings?() }
+            )
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 56)
+    }
+
+    private var settingsPage: some View {
+        VStack(spacing: 0) {
+            settingsHeader
+            sectionDivider
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 18) {
+                    settingsSection("能力与权限") {
+                        permissionRow(
+                            title: "帮你输入",
+                            detail: "把整理好的文字放回当前输入框",
+                            icon: "鼠标图标",
+                            isGranted: model.dashboard.accessibilityGranted,
+                            actionTitle: "去设置",
+                            action: { model.onRequestAccessibility?() }
                         )
-                        heroActionButton(
-                            title: model.dashboard.isConversationActive ? "结束对话" : "语音 Agent",
-                            assetName: model.dashboard.isConversationActive ? "停止图标" : "语音图标",
-                            isPrimary: false,
-                            action: { model.onToggleConversation?() }
+                        permissionRow(
+                            title: "听懂你的声音",
+                            detail: "只在你主动使用时开启麦克风",
+                            icon: "麦克风图标",
+                            isGranted: model.dashboard.microphoneGranted,
+                            actionTitle: model.dashboard.microphoneCanRequest ? "允许" : "去设置",
+                            action: { model.onRequestMicrophone?() }
+                        )
+                        permissionRow(
+                            title: "看懂框选内容",
+                            detail: "只有主动框选时才读取屏幕",
+                            icon: "框选图标",
+                            isGranted: model.dashboard.screenCaptureGranted,
+                            actionTitle: "去设置",
+                            showsDivider: false,
+                            action: { model.onRequestScreenCapture?() }
                         )
                     }
+
+                    settingsSection("连接与使用") {
+                        informationRow(
+                            title: "语音连接",
+                            detail: connectionDetail,
+                            icon: "云连接图标",
+                            trailing: connectionState,
+                            trailingColor: model.dashboard.serviceAvailable ? .green : .orange
+                        )
+                        informationRow(
+                            title: "本次使用",
+                            detail: "\(sessionUsageText) · 预计 \(formattedCost(model.dashboard.talkEstimatedCostUSD))",
+                            icon: "语音图标",
+                            trailing: nil
+                        )
+                        informationRow(
+                            title: "账户余额",
+                            detail: friendlyQuotaDetail,
+                            icon: "额度图标",
+                            trailing: nil,
+                            showsDivider: false
+                        )
+                    }
+
+                    settingsSection("其他") {
+                        commandRow(
+                            title: "重新检查",
+                            detail: "更新连接和权限状态",
+                            icon: "刷新图标",
+                            showsDivider: model.dashboard.lastOutput?.isEmpty == false,
+                            action: { model.onRefresh?() }
+                        )
+                        if let output = model.dashboard.lastOutput, !output.isEmpty {
+                            commandRow(
+                                title: "清除最近内容",
+                                detail: "移除当前保留的文字",
+                                icon: "删除图标",
+                                showsDivider: false,
+                                action: { model.onClearLastOutput?() }
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 16)
+            }
+        }
+    }
+
+    private var settingsHeader: some View {
+        HStack(spacing: 10) {
+            headerButton(
+                assetName: "返回图标",
+                help: "返回",
+                accessibilityLabel: "返回 Olli 主页",
+                action: { model.onPresentDashboard?() }
+            )
+
+            Image("灵动岛紧凑图标")
+                .renderingMode(.original)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 24, height: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("设置")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("让 Olli 更适合你")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+
+            Spacer(minLength: 12)
+
+            quitHeaderButton
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 56)
+    }
+
+    @ViewBuilder
+    private var presentedMessage: some View {
+        switch model.phase {
+        case .failure(let message, let canRetry):
+            messageBand(
+                message: message,
+                icon: "警告图标",
+                tint: .orange,
+                canRetry: canRetry
+            )
+        case .notice(let message):
+            messageBand(
+                message: message,
+                icon: "完成图标",
+                tint: .green,
+                canRetry: false
+            )
+        case .result(let text, let message, let canRetry):
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    appIcon("文档图标")
+                        .foregroundStyle(.cyan)
+                    Text(message)
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
                 }
 
-                Spacer(minLength: 0)
+                Text(text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(4)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(spacing: 10) {
-                    heroIconChip("文字图标", color: .cyan)
-                    heroIconChip("语音图标", color: .pink)
-                    heroIconChip("框选图标", color: WorkspacePalette.accent)
+                HStack(spacing: 8) {
+                    Spacer()
+                    if canRetry {
+                        compactCommand(
+                            title: "再试一次",
+                            icon: "刷新图标",
+                            action: { model.onRetry?() }
+                        )
+                    }
+                    compactCommand(
+                        title: "复制文字",
+                        icon: "复制图标",
+                        emphasized: true,
+                        action: { model.onCopy?() }
+                    )
                 }
             }
-            .padding(18)
+            .padding(12)
+            .solidModule()
+        default:
+            EmptyView()
         }
-        .frame(maxWidth: .infinity, minHeight: 168, maxHeight: 168)
     }
 
-    private func heroActionButton(
-        title: String,
-        assetName: String,
-        isPrimary: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                templateIcon(
-                    assetName,
-                    size: 15,
-                    color: isPrimary ? WorkspacePalette.ink : .white
-                )
-                Text(title)
-                    .font(.system(size: 10, weight: .semibold))
+    private var quickActions: some View {
+        HStack(spacing: 0) {
+            actionButton(
+                title: model.dashboard.isDictationActive ? "完成听写" : "帮我写",
+                icon: model.dashboard.isDictationActive ? "停止图标" : "文字图标",
+                tint: .cyan,
+                action: { model.onToggleDictation?() }
+            )
+            quickActionDivider
+            actionButton(
+                title: model.dashboard.isConversationActive ? "结束对话" : "聊一聊",
+                icon: model.dashboard.isConversationActive ? "停止图标" : "语音图标",
+                tint: .pink,
+                action: { model.onToggleConversation?() }
+            )
+            quickActionDivider
+            actionButton(
+                title: "看一下屏幕",
+                icon: "框选图标",
+                tint: .purple,
+                action: { model.onSelectScreenRegion?() }
+            )
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 6)
+        .solidModule()
+    }
+
+    private var usageMonitor: some View {
+        HStack(spacing: 12) {
+            appIcon("语音图标", size: 18)
+                .foregroundStyle(.cyan)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("本次使用")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(sessionUsageText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.48))
                     .lineLimit(1)
-            }
-            .padding(.horizontal, 11)
-            .frame(height: 32)
-        }
-        .buttonStyle(WorkspaceActionButtonStyle(isPrimary: isPrimary))
-    }
-
-    private func heroIconChip(_ assetName: String, color: Color) -> some View {
-        templateIcon(assetName, size: 19, color: color)
-            .frame(width: 36, height: 36)
-            .background(
-                Color.white.opacity(0.11),
-                in: Circle()
-            )
-            .overlay {
-                Circle()
-                    .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-            }
-    }
-
-    private var runSummary: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("本次运行")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(WorkspacePalette.ink)
-                .padding(.bottom, 8)
-
-            summaryMetric(
-                formattedCount(model.dashboard.talkResponses),
-                label: "Talk 回复"
-            )
-            summaryMetric(
-                formattedCount(model.dashboard.talkTokens + model.dashboard.dictationTokens),
-                label: "token"
-            )
-            summaryMetric(
-                formattedCost(model.dashboard.talkEstimatedCostUSD),
-                label: "预估费用"
-            )
-
-            Spacer(minLength: 4)
-            Divider().overlay(WorkspacePalette.line)
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 6, height: 6)
-                Text(model.dashboard.serviceAvailable ? "服务可用" : "需要检查")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(WorkspacePalette.muted)
+                Text(friendlyQuotaDetail)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.white.opacity(0.34))
                     .lineLimit(1)
-            }
-            .padding(.top, 8)
-        }
-        .padding(15)
-        .frame(width: 170, height: 168, alignment: .topLeading)
-        .background(
-            WorkspacePalette.module,
-            in: RoundedRectangle(
-                cornerRadius: WorkspaceLayout.moduleCornerRadius,
-                style: .continuous
-            )
-        )
-        .overlay {
-            RoundedRectangle(
-                cornerRadius: WorkspaceLayout.moduleCornerRadius,
-                style: .continuous
-            )
-            .strokeBorder(WorkspacePalette.line, lineWidth: 1)
-        }
-    }
-
-    private func summaryMetric(_ value: String, label: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Text(value)
-                .font(.system(size: 18, weight: .medium, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-            Text(label)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(WorkspacePalette.muted)
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .frame(height: 27)
-    }
-
-    private var activitySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("最近结果")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(WorkspacePalette.ink)
-                Text("仅保留当前内存中的内容")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(WorkspacePalette.muted)
-                Spacer(minLength: 0)
+                    .minimumScaleFactor(0.78)
             }
 
+            Spacer(minLength: 10)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(formattedCost(model.dashboard.talkEstimatedCostUSD))
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                Text("预计费用")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.white.opacity(0.38))
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 58)
+        .solidModule()
+    }
+
+    @ViewBuilder
+    private var attentionRows: some View {
+        let dashboard = model.dashboard
+        if !dashboard.accessibilityGranted
+            || !dashboard.microphoneGranted
+            || !dashboard.screenCaptureGranted
+            || dashboard.serviceNeedsAttention
+            || dashboard.canRetry {
             VStack(spacing: 0) {
-                recentOutputRow
-                rowDivider
-                serviceActivityRow
-
-                ForEach(Array(attentionItems.enumerated()), id: \.element.id) { _, item in
-                    rowDivider
-                    attentionActivityRow(item)
+                if !dashboard.accessibilityGranted {
+                    attentionRow(
+                        title: "允许 Olli 帮你输入",
+                        icon: "编辑图标",
+                        actionTitle: "授权",
+                        action: { model.onRequestAccessibility?() }
+                    )
+                }
+                if !dashboard.microphoneGranted {
+                    attentionRow(
+                        title: "打开麦克风权限",
+                        icon: "麦克风关闭图标",
+                        actionTitle: dashboard.microphoneCanRequest ? "允许" : "设置",
+                        action: { model.onRequestMicrophone?() }
+                    )
+                }
+                if !dashboard.screenCaptureGranted {
+                    attentionRow(
+                        title: "允许 Olli 看你框选的内容",
+                        icon: "框选图标",
+                        actionTitle: "授权",
+                        action: { model.onRequestScreenCapture?() }
+                    )
+                }
+                if dashboard.serviceNeedsAttention {
+                    attentionRow(
+                        title: "语音连接暂时不可用",
+                        icon: "网络图标",
+                        actionTitle: "重试",
+                        action: { model.onRefresh?() }
+                    )
+                }
+                if dashboard.canRetry {
+                    attentionRow(
+                        title: "刚刚的内容还在",
+                        icon: "刷新图标",
+                        actionTitle: "重试",
+                        action: { model.onRetry?() }
+                    )
                 }
             }
-            .background(
-                WorkspacePalette.canvas,
-                in: RoundedRectangle(
-                    cornerRadius: WorkspaceLayout.moduleCornerRadius,
-                    style: .continuous
-                )
-            )
-            .overlay {
-                RoundedRectangle(
-                    cornerRadius: WorkspaceLayout.moduleCornerRadius,
-                    style: .continuous
-                )
-                .strokeBorder(WorkspacePalette.line, lineWidth: 1)
-            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .solidModule()
         }
     }
 
     @ViewBuilder
-    private var recentOutputRow: some View {
-        if let output = model.dashboard.lastOutput, !output.isEmpty {
-            HStack(alignment: .center, spacing: 12) {
-                Text("最近")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(WorkspacePalette.muted)
-                    .frame(width: 42, alignment: .leading)
+    private var recentResult: some View {
+        if case .result = model.phase {
+            EmptyView()
+        } else if let output = model.dashboard.lastOutput, !output.isEmpty {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 8) {
+                    appIcon("文档图标")
+                        .foregroundStyle(.cyan)
+                    Text("刚刚整理")
+                        .font(.system(size: 11, weight: .semibold))
+                    Spacer()
+
+                    Button(action: { model.onCopy?() }) {
+                        appIcon("复制图标")
+                    }
+                    .buttonStyle(.plain)
+                    .help("复制文字")
+
+                    Button(action: { model.onClearLastOutput?() }) {
+                        appIcon("删除图标")
+                    }
+                    .buttonStyle(.plain)
+                    .help("清除这段文字")
+                }
 
                 Text(output)
                     .font(.system(size: 12))
-                    .foregroundStyle(WorkspacePalette.ink)
-                    .lineLimit(3)
-                    .textSelection(.enabled)
+                    .foregroundStyle(.white.opacity(0.62))
+                    .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
-
-                if model.dashboard.canRetry {
-                    iconButton(
-                        assetName: "刷新图标",
-                        help: "重试最近一次转写",
-                        action: { model.onRetry?() }
-                    )
-                }
-                iconButton(
-                    assetName: "复制图标",
-                    help: "复制最近结果",
-                    action: { model.onCopy?() }
-                )
             }
-            .padding(.horizontal, 14)
-            .frame(minHeight: 66)
-        } else {
-            HStack(spacing: 12) {
-                templateIcon("完成图标", size: 18, color: WorkspacePalette.muted)
-                Text("还没有可恢复的转写结果")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(WorkspacePalette.muted)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 14)
-            .frame(minHeight: 58)
+            .padding(12)
+            .solidModule()
         }
     }
 
-    private var serviceActivityRow: some View {
-        HStack(spacing: 12) {
-            templateIcon("云连接图标", size: 18, color: statusColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("本地语音服务")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(model.dashboard.serviceLabel)
-                    .font(.system(size: 9))
-                    .foregroundStyle(WorkspacePalette.muted)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 12)
-            Text(model.dashboard.serviceAvailable ? "可用" : "需检查")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(statusColor)
-        }
-        .padding(.horizontal, 14)
-        .frame(minHeight: 56)
-    }
-
-    private func attentionActivityRow(_ item: AttentionItem) -> some View {
-        HStack(spacing: 12) {
-            templateIcon(item.iconAsset, size: 18, color: .orange)
-            Text(item.title)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
-            Spacer(minLength: 12)
-            Button(item.actionTitle, action: item.action)
-                .font(.system(size: 9, weight: .semibold))
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-        }
-        .padding(.horizontal, 14)
-        .frame(minHeight: 54)
-    }
-
-    func iconButton(
-        assetName: String,
-        help: String,
+    private func actionButton(
+        title: String,
+        icon: String,
+        tint: Color,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            templateIcon(assetName, size: 15, color: WorkspacePalette.ink)
-                .frame(width: 32, height: 32)
+            VStack(spacing: 5) {
+                appIcon(icon, size: 18)
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(WorkspaceIconButtonStyle())
-        .help(help)
-        .accessibilityLabel(help)
+        .buttonStyle(.plain)
     }
 
-    func templateIcon(
-        _ assetName: String,
-        size: CGFloat,
-        color: Color
+    private var quickActionDivider: some View {
+        Rectangle()
+            .fill(.white.opacity(0.08))
+            .frame(width: 1, height: 30)
+    }
+
+    private func attentionRow(
+        title: String,
+        icon: String,
+        actionTitle: String,
+        action: @escaping () -> Void
     ) -> some View {
+        HStack(spacing: 9) {
+            appIcon(icon)
+                .foregroundStyle(.orange)
+                .frame(width: 18)
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+            Spacer()
+            Button(actionTitle, action: action)
+                .font(.system(size: 10, weight: .semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.78))
+        }
+        .frame(height: 28)
+    }
+
+    private func messageBand(
+        message: String,
+        icon: String,
+        tint: Color,
+        canRetry: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            appIcon(icon)
+                .foregroundStyle(tint)
+            Text(message)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if canRetry {
+                Button(action: { model.onRetry?() }) {
+                    appIcon("刷新图标")
+                }
+                .buttonStyle(.plain)
+                .help("重试")
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 38)
+        .solidModule()
+    }
+
+    private func compactCommand(
+        title: String,
+        icon: String,
+        emphasized: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                appIcon(icon)
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(emphasized ? Color.black : Color.white.opacity(0.84))
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(emphasized ? Color.white : Color.white.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func headerButton(
+        assetName: String,
+        rendersOriginal: Bool = false,
+        help: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(assetName)
+                .renderingMode(rendersOriginal ? .original : .template)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 16, height: 16)
+                .frame(width: 28, height: 28)
+                .background(.white.opacity(0.08))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var quitHeaderButton: some View {
+        Button(action: { model.onQuit?() }) {
+            HStack(spacing: 6) {
+                Image("退出图标")
+                    .renderingMode(.original)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 16, height: 16)
+                Text("退出")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.82))
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(.white.opacity(0.08))
+            .clipShape(Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("q")
+        .help("退出 Olli")
+        .accessibilityLabel("退出 Olli")
+    }
+
+    private func settingsSection<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.38))
+                .padding(.leading, 4)
+
+            VStack(spacing: 0) {
+                content()
+            }
+            .solidModule()
+        }
+    }
+
+    private func permissionRow(
+        title: String,
+        detail: String,
+        icon: String,
+        isGranted: Bool,
+        actionTitle: String,
+        showsDivider: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                settingsIcon(icon, color: isGranted ? .green : .orange)
+                settingsLabels(title: title, detail: detail)
+                Spacer(minLength: 10)
+
+                if isGranted {
+                    HStack(spacing: 4) {
+                        appIcon("完成图标")
+                        Text("已开启")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundStyle(.green)
+                } else {
+                    Text(actionTitle)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.6))
+                    appIcon("右箭头图标")
+                        .foregroundStyle(.white.opacity(0.3))
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 48)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                if showsDivider { settingsRowDivider }
+            }
+        }
+        .buttonStyle(.plain)
+        .allowsHitTesting(!isGranted)
+    }
+
+    private func informationRow(
+        title: String,
+        detail: String,
+        icon: String,
+        trailing: String?,
+        trailingColor: Color = .white.opacity(0.5),
+        showsDivider: Bool = true
+    ) -> some View {
+        HStack(spacing: 11) {
+            settingsIcon(icon, color: .white.opacity(0.72))
+            settingsLabels(title: title, detail: detail)
+            Spacer(minLength: 10)
+            if let trailing {
+                Text(trailing)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(trailingColor)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 48)
+        .overlay(alignment: .bottom) {
+            if showsDivider { settingsRowDivider }
+        }
+    }
+
+    private func commandRow(
+        title: String,
+        detail: String,
+        icon: String,
+        showsDivider: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                settingsIcon(icon, color: .white.opacity(0.7))
+                settingsLabels(title: title, detail: detail)
+                Spacer(minLength: 10)
+                appIcon("右箭头图标")
+                    .foregroundStyle(.white.opacity(0.3))
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 48)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) {
+                if showsDivider { settingsRowDivider }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func settingsIcon(_ icon: String, color: Color) -> some View {
+        appIcon(icon)
+            .foregroundStyle(color)
+            .frame(width: 20)
+    }
+
+    private func appIcon(_ assetName: String, size: CGFloat = 16) -> some View {
         Image(assetName)
             .renderingMode(.template)
             .resizable()
             .interpolation(.high)
             .aspectRatio(contentMode: .fit)
-            .foregroundStyle(color)
             .frame(width: size, height: size)
     }
 
-    var rowDivider: some View {
+    private func settingsLabels(title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+            Text(detail)
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.4))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+    }
+
+    private var settingsRowDivider: some View {
+        Rectangle()
+            .fill(.white.opacity(0.08))
+            .frame(height: 1)
+            .padding(.leading, 45)
+            .padding(.trailing, 14)
+    }
+
+    private var sectionDivider: some View {
         Divider()
-            .overlay(WorkspacePalette.line)
-            .padding(.leading, 54)
+            .overlay(.white.opacity(0.1))
     }
 
-    private var attentionItems: [AttentionItem] {
-        var items: [AttentionItem] = []
-        let dashboard = model.dashboard
-
-        if !dashboard.accessibilityGranted {
-            items.append(
-                AttentionItem(
-                    id: "accessibility",
-                    title: "辅助功能尚未开启",
-                    iconAsset: "鼠标图标",
-                    actionTitle: "处理",
-                    action: { model.onRequestAccessibility?() }
-                )
-            )
-        }
-        if !dashboard.microphoneGranted {
-            items.append(
-                AttentionItem(
-                    id: "microphone",
-                    title: "麦克风权限尚未开启",
-                    iconAsset: "麦克风关闭图标",
-                    actionTitle: dashboard.microphoneCanRequest ? "允许" : "设置",
-                    action: { model.onRequestMicrophone?() }
-                )
-            )
-        }
-        if !dashboard.screenCaptureGranted {
-            items.append(
-                AttentionItem(
-                    id: "screen-capture",
-                    title: "框选屏幕需要录屏权限",
-                    iconAsset: "框选图标",
-                    actionTitle: "设置",
-                    action: { model.onRequestScreenCapture?() }
-                )
-            )
-        }
-        if dashboard.serviceNeedsAttention {
-            items.append(
-                AttentionItem(
-                    id: "service",
-                    title: dashboard.serviceLabel,
-                    iconAsset: "网络图标",
-                    actionTitle: "重试",
-                    action: { model.onRefresh?() }
-                )
-            )
-        }
-        if dashboard.canRetry {
-            items.append(
-                AttentionItem(
-                    id: "retry",
-                    title: "上一次操作可以恢复",
-                    iconAsset: "刷新图标",
-                    actionTitle: "重试",
-                    action: { model.onRetry?() }
-                )
-            )
-        }
-        return items
-    }
-
-    private var currentStatusDetail: String {
-        if model.dashboard.isConversationActive {
-            return "语音 Agent 正在运行，框选屏幕会附加到当前对话。"
-        }
-        if model.dashboard.isDictationActive {
-            return "Friday 正在整理你的口述，完成后优先写回原输入位置。"
-        }
-        return "在当前应用中自然表达，Friday 会把整理结果送回原输入位置。"
-    }
-
-    var statusColor: Color {
-        if model.dashboard.isConversationActive { return .pink }
-        if model.dashboard.isDictationActive { return .cyan }
+    private var statusColor: Color {
+        if model.dashboard.isConversationActive { return .cyan }
+        if model.dashboard.isDictationActive { return .pink }
         if model.dashboard.serviceChecking { return .orange }
         return model.dashboard.serviceAvailable ? .green : .orange
     }
 
-    func formattedCount(_ value: Int) -> String {
-        value.formatted(.number.grouping(.automatic))
-    }
-
-    func formattedCost(_ value: Double) -> String {
-        String(format: "$%.4f", value)
-    }
-}
-
-private struct AttentionItem {
-    let id: String
-    let title: String
-    let iconAsset: String
-    let actionTitle: String
-    let action: () -> Void
-}
-
-private struct HeroSignalPattern: View {
-    var body: some View {
-        Canvas { context, size in
-            let centerY = size.height * 0.53
-            let spacing = max(size.width / 28, 8)
-
-            for index in 0...28 {
-                let x = CGFloat(index) * spacing
-                let phase = CGFloat(index) * 0.72
-                let height = 10 + (sin(phase) + 1) * 14
-                var path = Path()
-                path.move(to: CGPoint(x: x, y: centerY - height))
-                path.addLine(to: CGPoint(x: x, y: centerY + height))
-                context.stroke(
-                    path,
-                    with: .color(.white.opacity(index.isMultiple(of: 3) ? 0.10 : 0.045)),
-                    lineWidth: 1
-                )
-            }
+    private var friendlyHeaderStatus: String {
+        switch model.phase {
+        case .listening:
+            return "我在听"
+        case .processing:
+            return "正在帮你整理"
+        case .conversation:
+            return "正在和你聊"
+        case .failure:
+            return "刚刚没有完成"
+        case .result:
+            return "内容已经准备好"
+        case .notice:
+            return "已经处理好了"
+        case .hidden, .idle:
+            if model.dashboard.serviceChecking { return "正在准备" }
+            return model.dashboard.serviceAvailable ? "随时可以开始" : "暂时没连上"
         }
-        .allowsHitTesting(false)
     }
-}
 
-private struct WorkspaceIconButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                configuration.isPressed
-                    ? WorkspacePalette.selection
-                    : WorkspacePalette.module,
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(WorkspacePalette.line, lineWidth: 1)
-            }
+    private var connectionState: String {
+        if model.dashboard.serviceChecking { return "连接中" }
+        return model.dashboard.serviceAvailable ? "已连接" : "需检查"
     }
-}
 
-private struct WorkspaceActionButtonStyle: ButtonStyle {
-    let isPrimary: Bool
+    private var connectionDetail: String {
+        if model.dashboard.serviceChecking {
+            return "稍等一下，Olli 正在连接"
+        }
+        if model.dashboard.serviceAvailable {
+            return "可以正常使用听写和对话"
+        }
+        return "暂时无法连接，请重新检查"
+    }
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(isPrimary ? WorkspacePalette.ink : Color.white)
-            .background(
-                isPrimary ? Color.white : Color.white.opacity(0.09),
-                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(
-                        isPrimary ? Color.clear : Color.white.opacity(0.17),
-                        lineWidth: 1
-                    )
-            }
-            .opacity(configuration.isPressed ? 0.74 : 1)
+    private var sessionUsageText: String {
+        let conversations = model.dashboard.talkResponses
+        let hasDictation = model.dashboard.dictationTokens > 0
+        if conversations > 0, hasDictation {
+            return "已聊 \(conversations) 轮，也完成了听写"
+        }
+        if conversations > 0 {
+            return "已经和 Olli 聊了 \(conversations) 轮"
+        }
+        if hasDictation {
+            return "已经完成一次听写"
+        }
+        return "还没有产生用量"
+    }
+
+    private var friendlyQuotaDetail: String {
+        let label = model.dashboard.quotaLabel
+        if label.contains("预付余额已用完") {
+            return "余额已用完，请检查账户"
+        }
+        if label.contains("上限已触发") {
+            return "账户用量已到上限"
+        }
+        if label.contains("Mock") {
+            return "当前不会产生费用"
+        }
+        if label.contains("等待") {
+            return "连接后会更新额度状态"
+        }
+        if label.contains("服务不可用") {
+            return "暂时无法检查账户额度"
+        }
+        return "账户余额暂时无法直接查询"
+    }
+
+    private func formattedCost(_ value: Double) -> String {
+        String(format: "$%.4f", value)
     }
 }
 
@@ -747,7 +809,12 @@ struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
         let model = InputOverlayModel()
         model.dashboard = .preview
+        model.isDashboardExpanded = true
         return ContentView(model: model)
-            .frame(width: 920, height: 640)
+            .frame(
+                width: InputOverlaySizing.expandedSize.width,
+                height: InputOverlaySizing.expandedSize.height
+            )
+            .background(.black)
     }
 }

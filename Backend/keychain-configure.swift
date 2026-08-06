@@ -57,8 +57,8 @@ func saveSecret(_ secret: String, account: String, service: String) throws {
     let valueData = Data(secret.utf8)
     let attributes: [CFString: Any] = [
         kSecValueData: valueData,
-        kSecAttrLabel: "Friday OpenAI API Key",
-        kSecAttrComment: "Friday local Realtime session service"
+        kSecAttrLabel: "Olli OpenAI API Key",
+        kSecAttrComment: "Olli local Realtime session service"
     ]
 
     let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
@@ -99,7 +99,7 @@ func readSecretsFromDialog() throws -> (String, String) {
 
     let alert = NSAlert()
     alert.alertStyle = .informational
-    alert.messageText = "配置 Friday 语音服务"
+    alert.messageText = "配置 Olli 语音服务"
     alert.informativeText = "输入完整 OpenAI Project Secret。Key 只会保存在本机钥匙串中。"
     alert.accessoryView = accessoryView
     alert.addButton(withTitle: "保存并验证")

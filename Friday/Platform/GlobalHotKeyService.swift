@@ -39,10 +39,11 @@ struct ModifierChordRecognizer {
     private var pendingAction: GlobalHotKeyAction?
     private var isBlockedUntilRelease = false
     private var isConsumingFunctionGesture = false
+    private var consumesTrailingFunctionKeyUp = false
     private(set) var suppressesCurrentFlagsEvent = false
 
     var shouldConsumeFunctionKeyEvent: Bool {
-        isConsumingFunctionGesture
+        isConsumingFunctionGesture || consumesTrailingFunctionKeyUp
     }
 
     mutating func handleFlagsChanged(
@@ -55,6 +56,7 @@ struct ModifierChordRecognizer {
            armedAction == nil,
            pendingAction == nil,
            !isBlockedUntilRelease {
+            consumesTrailingFunctionKeyUp = false
             isConsumingFunctionGesture = true
         }
         if isConsumingFunctionGesture,
@@ -64,10 +66,13 @@ struct ModifierChordRecognizer {
 
         guard !current.isEmpty else {
             let action = isBlockedUntilRelease ? nil : (pendingAction ?? armedAction)
+            let completedPureFunctionGesture = isConsumingFunctionGesture
+                && action == .dictation
             armedAction = nil
             pendingAction = nil
             isBlockedUntilRelease = false
             isConsumingFunctionGesture = false
+            consumesTrailingFunctionKeyUp = completedPureFunctionGesture
             return action
         }
 
@@ -110,11 +115,27 @@ struct ModifierChordRecognizer {
     }
 
     mutating func handleKeyDown(modifierFlags: NSEvent.ModifierFlags) {
+        consumesTrailingFunctionKeyUp = false
         let current = modifierFlags.intersection(Self.relevantModifiers)
         guard armedAction != nil || !current.isEmpty else { return }
         armedAction = nil
         pendingAction = nil
         isBlockedUntilRelease = true
+    }
+
+    mutating func consumeFunctionKeyUpIfNeeded() -> Bool {
+        let shouldConsume = shouldConsumeFunctionKeyEvent
+        consumesTrailingFunctionKeyUp = false
+        return shouldConsume
+    }
+
+    mutating func reset() {
+        armedAction = nil
+        pendingAction = nil
+        isBlockedUntilRelease = false
+        isConsumingFunctionGesture = false
+        consumesTrailingFunctionKeyUp = false
+        suppressesCurrentFlagsEvent = false
     }
 
     private func modifiers(
@@ -183,14 +204,31 @@ final class GlobalHotKeyService {
         )
     }
 
+    func unregister() {
+        recognizer.reset()
+        if let eventTapSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
+        }
+        if let eventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            CFMachPortInvalidate(eventTap)
+        }
+        eventTapSource = nil
+        eventTap = nil
+    }
+
     fileprivate func handleEventTap(
         type: CGEventType,
         event: CGEvent
     ) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            recognizer.reset()
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
+            logger.error(
+                "Global hot key event tap re-enabled after disable type=\(type.rawValue, privacy: .public)"
+            )
             return Unmanaged.passUnretained(event)
         }
 
@@ -213,7 +251,7 @@ final class GlobalHotKeyService {
             action = nil
         case .keyUp:
             suppressEvent = event.getIntegerValueField(.keyboardEventKeycode) == 63
-                && recognizer.shouldConsumeFunctionKeyEvent
+                && recognizer.consumeFunctionKeyUpIfNeeded()
             action = nil
         default:
             action = nil
@@ -221,7 +259,10 @@ final class GlobalHotKeyService {
 
         if let action {
             logger.debug("Global modifier chord received")
-            onPressed?(action)
+            // Return from CGEventTap before microphone start/stop or UI work runs.
+            DispatchQueue.main.async { [weak self] in
+                self?.onPressed?(action)
+            }
         }
 
         if suppressEvent || action == .dictation {

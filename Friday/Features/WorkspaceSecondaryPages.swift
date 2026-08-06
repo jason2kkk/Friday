@@ -1,10 +1,10 @@
-// 功能：提供 Friday 主工作台的运行监控与设置页面。
+// 功能：提供 Olli 主工作台的运行监控与设置页面。
 // 职责：使用主工作台共享样式呈现本地用量、服务、权限和进程管理命令，并把操作转发给 InputOverlayModel。
 // 边界：只消费状态快照和事件闭包，不直接访问网络、系统权限、音频设备或持久化用户数据。
 
 import SwiftUI
 
-extension ContentView {
+extension AppDashboardView {
     var monitoringPage: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 22) {
@@ -136,7 +136,7 @@ extension ContentView {
 
                     rowDivider
                     settingsCommandRow(
-                        title: "退出 Friday",
+                        title: "退出 Olli",
                         detail: "结束语音任务、快捷键和后台进程",
                         iconAsset: "退出图标",
                         tint: .pink,
@@ -172,7 +172,7 @@ extension ContentView {
             }
             iconButton(
                 assetName: "刷新图标",
-                help: "刷新 Friday 状态",
+                help: "刷新 Olli 状态",
                 action: { model.onRefresh?() }
             )
         }

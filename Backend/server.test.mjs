@@ -1,5 +1,5 @@
 // 功能：验证本地 Realtime 凭证服务的 HTTP 契约、会话配置和安全保护是否符合预期。
-// 职责：启动本地假 OpenAI 上游，覆盖存活/就绪分层、凭证签发、Talk 参数、累计计数、重试保护、错误脱敏和诊断。
+// 职责：启动本地假 OpenAI 上游，覆盖存活/就绪分层、凭证签发、Talk Provider-VAD 默认契约与 client-gate 回退、请求保护、错误脱敏和诊断。
 // 边界：测试不读取真实 API Key，不访问真实 OpenAI，也不创建付费模型响应。
 
 import test from "node:test";
@@ -22,7 +22,8 @@ test("session service issues credentials without a cumulative cap and tracks loc
     if (request.method === "GET"
         && new Set([
           "/v1/models/gpt-realtime",
-          "/v1/models/gpt-realtime-2.1"
+          "/v1/models/gpt-realtime-2.1",
+          "/v1/models/gpt-realtime-whisper"
         ]).has(request.url)) {
       return sendJSON(response, 200, { id: request.url.split("/").at(-1) });
     }
@@ -53,6 +54,7 @@ test("session service issues credentials without a cumulative cap and tracks loc
       FRIDAY_SESSION_PORT: String(servicePort),
       FRIDAY_CREDENTIAL_BURST_LIMIT: "10",
       FRIDAY_BUDGET_FILE: budgetFile,
+      FRIDAY_TALK_MAX_OUTPUT_TOKENS: "",
       FRIDAY_INPUT_TRANSCRIPTION_MODEL: "gpt-realtime-whisper",
       FRIDAY_INPUT_TRANSCRIPTION_LANGUAGE: "zh",
       FRIDAY_INPUT_TRANSCRIPTION_DELAY: "medium"
@@ -60,7 +62,7 @@ test("session service issues credentials without a cumulative cap and tracks loc
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const health = await fetchJSON(`http://127.0.0.1:${servicePort}/health`);
   assert.equal(health.status, 200);
@@ -69,15 +71,22 @@ test("session service issues credentials without a cumulative cap and tracks loc
   assert.equal(health.body.dictation_reasoning_effort, "minimal");
   assert.equal(health.body.talk_model, "gpt-realtime-2.1");
   assert.equal(health.body.talk_reasoning_effort, "low");
-  assert.equal(health.body.talk_prompt_version, "2026-08-03.application-target-write-v1");
-  assert.equal(health.body.talk_response_creation, "client");
+  assert.equal(health.body.talk_prompt_version, "2026-08-06.desktop-app-actions-v2");
+  assert.equal(health.body.talk_endpointing, "provider_vad");
+  assert.equal(health.body.talk_vad_eagerness, "auto");
+  assert.equal(health.body.talk_interrupt_response, false);
+  assert.equal(health.body.talk_allows_response_interruption, true);
+  assert.equal(health.body.talk_max_output_tokens, null);
+  assert.equal(health.body.talk_response_creation, "provider");
   assert.equal(health.body.sessions_issued, 0);
   assert.equal(health.body.burst_protection_enabled, true);
   assert.equal(health.body.account_balance_readable, false);
   assert.equal(health.body.billing_status, "unknown");
-  assert.equal(health.body.agent_mode, "automatic_reversible_write");
+  assert.equal(health.body.agent_mode, "desktop_app_actions_v2");
   assert.equal(health.body.work_runtime, "mock_read_only");
   assert.equal(health.body.automatic_focused_write_enabled, true);
+  assert.equal(health.body.dictation_input_transcription_enabled, false);
+  assert.equal(health.body.talk_input_transcription_enabled, true);
   assert.equal(health.body.input_transcription_enabled, true);
   assert.equal(health.body.input_transcription_model, "gpt-realtime-whisper");
   assert.equal("daily_sessions_remaining" in health.body, false);
@@ -104,17 +113,14 @@ test("session service issues credentials without a cumulative cap and tracks loc
   );
   assert.equal(firstCredential.status, 200);
   assert.equal(firstCredential.body.value, "ek_test_ephemeral");
-  assert.equal(firstCredential.body.input_transcription_enabled, true);
+  assert.equal(firstCredential.body.input_transcription_enabled, false);
+  assert.equal(firstCredential.body.input_transcription_model, null);
   assert.equal(firstCredential.body.model, "gpt-realtime-2.1");
   assert.equal(firstCredential.body.reasoning_effort, "minimal");
   assert.equal(credentialBody.session.model, "gpt-realtime-2.1");
   assert.deepEqual(credentialBody.session.output_modalities, ["text"]);
   assert.deepEqual(credentialBody.session.reasoning, { effort: "minimal" });
-  assert.deepEqual(credentialBody.session.audio.input.transcription, {
-    model: "gpt-realtime-whisper",
-    language: "zh",
-    delay: "medium"
-  });
+  assert.equal("transcription" in credentialBody.session.audio.input, false);
 
   const secondCredential = await fetchJSON(
     `http://127.0.0.1:${servicePort}/v1/realtime/client-secret`,
@@ -169,7 +175,7 @@ test("health stays local while readiness bounds a stalled upstream", async (t) =
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const startedAt = performance.now();
   const health = await fetchJSON(`http://127.0.0.1:${servicePort}/health`);
@@ -231,7 +237,7 @@ test("credential burst protection stops an abnormal retry loop", async (t) => {
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const endpoint = `http://127.0.0.1:${servicePort}/v1/realtime/client-secret`;
   assert.equal((await fetchJSON(endpoint, { method: "POST" })).status, 200);
@@ -275,7 +281,7 @@ test("health reports a billing block observed during credential creation", async
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const endpoint = `http://127.0.0.1:${servicePort}`;
   const blocked = await fetchJSON(`${endpoint}/v1/realtime/client-secret`, {
@@ -290,7 +296,7 @@ test("health reports a billing block observed during credential creation", async
   assert.equal(health.body.account_balance_readable, false);
 });
 
-test("talk mode creates a client-controlled audio session with background-noise handling", async (t) => {
+test("talk mode creates a provider-managed semantic VAD session", async (t) => {
   let credentialBody = null;
   const upstream = createServer(async (request, response) => {
     if (request.method === "GET"
@@ -333,7 +339,7 @@ test("talk mode creates a client-controlled audio session with background-noise 
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const credential = await fetchJSON(
     `http://127.0.0.1:${servicePort}/v1/realtime/client-secret`,
@@ -351,11 +357,14 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.equal("maximum_turns" in credential.body, false);
   assert.equal("maximum_duration_seconds" in credential.body, false);
   assert.deepEqual(credentialBody.session.output_modalities, ["audio"]);
-  assert.equal(credential.body.vad_eagerness, "high");
+  assert.equal(credential.body.endpointing, "provider_vad");
+  assert.equal(credential.body.vad_eagerness, "auto");
+  assert.equal(credential.body.interrupt_response, false);
+  assert.equal(credential.body.allows_response_interruption, true);
   assert.equal(credential.body.reasoning_effort, "low");
   assert.equal(credential.body.max_output_tokens, 640);
-  assert.equal(credential.body.prompt_version, "2026-08-03.application-target-write-v1");
-  assert.equal(credential.body.response_creation, "client");
+  assert.equal(credential.body.prompt_version, "2026-08-06.desktop-app-actions-v2");
+  assert.equal(credential.body.response_creation, "provider");
   assert.equal(credential.body.agent_tools_enabled, true);
   assert.equal(credential.body.input_transcription_enabled, true);
   assert.equal(credential.body.input_transcription_model, "gpt-4o-mini-transcribe");
@@ -366,17 +375,21 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.equal(credentialBody.session.audio.input.noise_reduction.type, "near_field");
   assert.deepEqual(credentialBody.session.audio.input.transcription, {
     model: "gpt-4o-mini-transcribe",
-    language: "zh"
+    language: "zh",
+    delay: "minimal"
   });
-  assert.equal(credentialBody.session.audio.input.turn_detection.type, "semantic_vad");
-  assert.equal(credentialBody.session.audio.input.turn_detection.eagerness, "high");
-  assert.equal(credentialBody.session.audio.input.turn_detection.create_response, false);
-  assert.equal(credentialBody.session.audio.input.turn_detection.interrupt_response, false);
+  assert.deepEqual(credentialBody.session.audio.input.turn_detection, {
+    type: "semantic_vad",
+    eagerness: "auto",
+    create_response: true,
+    interrupt_response: false
+  });
   assert.equal(credentialBody.session.tool_choice, "auto");
   assert.deepEqual(
     credentialBody.session.tools.map(tool => tool.name),
     [
       "wait_for_user",
+      "open_application",
       "write_focused_input",
       "submit_work",
       "confirm_work",
@@ -390,7 +403,7 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.match(credentialBody.session.instructions, /只有用户明确要求“创建后台测试任务”/);
   assert.match(credentialBody.session.instructions, /只有下一轮用户清楚说出“确认提交”/);
   assert.match(credentialBody.session.instructions, /最终用户转写缺失、失败/);
-  assert.match(credentialBody.session.instructions, /其他真实动作时，当前没有可用工具/);
+  assert.match(credentialBody.session.instructions, /除打开应用和可撤销输入框写入外/);
   assert.match(credentialBody.session.instructions, /用户要求翻译、解释、总结或识别选区时/);
   assert.match(credentialBody.session.instructions, /调用 wait_for_user 后不要继续生成口头回复/);
   assert.match(credentialBody.session.instructions, /持续或完整的人声绝不能/);
@@ -399,6 +412,14 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.match(credentialBody.session.instructions, /完整结束当前句子/);
   assert.match(credentialBody.session.instructions, /不说“请告诉我你的需求”/);
   assert.match(credentialBody.session.instructions, /Codex.*com\.openai\.codex/);
+  assert.match(
+    credentialBody.session.instructions,
+    /同一请求同时包含“打开\/切换应用”和“写入文字”时，只调用 write_focused_input/
+  );
+  assert.match(
+    credentialBody.session.instructions,
+    /打开微信并在输入框写入你好.*只调用 write_focused_input/
+  );
 
   const waitForUserTool = credentialBody.session.tools.find(
     tool => tool.name === "wait_for_user"
@@ -406,6 +427,13 @@ test("talk mode creates a client-controlled audio session with background-noise 
   assert.match(waitForUserTool.description, /没有持续、可辨认的人声/);
   assert.match(waitForUserTool.description, /内容不清楚时应简短澄清/);
   assert.deepEqual(waitForUserTool.parameters.required, []);
+
+  const openApplicationTool = credentialBody.session.tools.find(
+    tool => tool.name === "open_application"
+  );
+  assert.match(openApplicationTool.description, /已安装 Bundle/);
+  assert.match(openApplicationTool.description, /直接调用 write_focused_input/);
+  assert.deepEqual(openApplicationTool.parameters.required, ["application"]);
 
   const writeFocusedInputTool = credentialBody.session.tools.find(
     tool => tool.name === "write_focused_input"
@@ -451,12 +479,13 @@ test("talk keeps reversible input write but hides Work tools without final ASR",
       OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
       FRIDAY_SESSION_PORT: String(servicePort),
       FRIDAY_BUDGET_FILE: join(temporaryDirectory, "budget.json"),
+      FRIDAY_TALK_MAX_OUTPUT_TOKENS: "",
       FRIDAY_INPUT_TRANSCRIPTION_MODEL: ""
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const credential = await fetchJSON(
     `http://127.0.0.1:${servicePort}/v1/realtime/client-secret`,
@@ -468,17 +497,72 @@ test("talk keeps reversible input write but hides Work tools without final ASR",
   );
 
   assert.equal(credential.status, 200);
+  assert.equal("max_output_tokens" in credential.body, false);
   assert.equal(credential.body.input_transcription_enabled, false);
   assert.equal(credential.body.agent_tools_enabled, true);
   assert.equal(credential.body.automatic_focused_write_enabled, true);
   assert.deepEqual(
     credentialBody.session.tools.map(tool => tool.name),
-    ["wait_for_user", "write_focused_input"]
+    ["wait_for_user", "open_application", "write_focused_input"]
   );
-  assert.equal(
-    credentialBody.session.audio.input.turn_detection.create_response,
-    false
+  assert.equal("max_output_tokens" in credentialBody.session, false);
+  assert.deepEqual(credentialBody.session.audio.input.turn_detection, {
+    type: "semantic_vad",
+    eagerness: "auto",
+    create_response: true,
+    interrupt_response: false
+  });
+});
+
+test("talk keeps client-gate endpointing as an explicit fallback", async (t) => {
+  let credentialBody = null;
+  const upstream = createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/v1/realtime/client_secrets") {
+      credentialBody = JSON.parse(await readBody(request));
+      return sendJSON(response, 200, {
+        value: "ek_test_client_gate_fallback",
+        session: { model: "gpt-realtime-2.1" }
+      });
+    }
+    sendJSON(response, 404, { error: { message: "not found" } });
+  });
+  const upstreamPort = await listenOnRandomPort(upstream);
+  t.after(() => upstream.close());
+
+  const servicePort = await unusedPort();
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "friday-client-gate-"));
+  t.after(() => rm(temporaryDirectory, { recursive: true, force: true }));
+  const service = spawn(process.execPath, [serverPath], {
+    cwd: backendDirectory,
+    env: {
+      ...process.env,
+      OPENAI_API_KEY: fakeOpenAIAPIKey,
+      OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
+      FRIDAY_SESSION_PORT: String(servicePort),
+      FRIDAY_BUDGET_FILE: join(temporaryDirectory, "budget.json"),
+      FRIDAY_TALK_ENDPOINTING: "client_gate"
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  t.after(() => service.kill("SIGTERM"));
+  await waitForOutput(service, "Olli session service listening");
+
+  const credential = await fetchJSON(
+    `http://127.0.0.1:${servicePort}/v1/realtime/client-secret`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "talk" })
+    }
   );
+
+  assert.equal(credential.status, 200);
+  assert.equal(credential.body.endpointing, "client_gate");
+  assert.equal(credential.body.vad_eagerness, null);
+  assert.equal(credential.body.response_creation, "client");
+  assert.equal(credential.body.interrupt_response, false);
+  assert.equal(credential.body.allows_response_interruption, true);
+  assert.equal(credentialBody.session.audio.input.turn_detection, null);
 });
 
 test("work API deduplicates submissions, completes, reports, and cancels", async (t) => {
@@ -494,7 +578,7 @@ test("work API deduplicates submissions, completes, reports, and cancels", async
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const endpoint = `http://127.0.0.1:${servicePort}/v1/work`;
   const submission = {
@@ -571,7 +655,7 @@ test("readiness errors redact upstream API key fragments", async (t) => {
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const readiness = await fetchJSON(`http://127.0.0.1:${servicePort}/ready`);
   assert.equal(readiness.status, 503);

@@ -1,5 +1,5 @@
 // 功能：为 Talk 的用户轮次、模型回复、助手消息和实际播放建立 Friday 自有的稳定身份链。
-// 职责：关联 Realtime `response_id` 与 `item_id`，跟踪回复和播放状态，并判断语音、音频、取消等事件是否仍属于当前轮次。
+// 职责：关联 Realtime committed 用户 Item、`response_id` 与助手 `item_id`，跟踪回复和播放状态，并判断语音、音频、取消等事件是否仍属于当前轮次。
 // 边界：只维护内存身份与状态，不解析网络 JSON、不播放音频，也不决定灵动岛或会话生命周期。
 
 import Foundation
@@ -172,6 +172,24 @@ struct ConversationTurnCorrelator {
               turns[activeTurnID]?.responseState == .awaitingResponse,
               !awaitingResponseTurnIDs.contains(activeTurnID) else { return }
         awaitingResponseTurnIDs.append(activeTurnID)
+    }
+
+    @discardableResult
+    mutating func attachProviderUserItemID(
+        _ providerItemID: ConversationProviderItemID,
+        to turnID: ConversationTurnID? = nil
+    ) -> ConversationTurnCorrelationSnapshot? {
+        if let existingTurnID = turnByProviderUserItemID[providerItemID] {
+            return turns[existingTurnID]
+        }
+        guard let resolvedTurnID = turnID ?? activeTurnID,
+              var turn = turns[resolvedTurnID],
+              turn.source == .userSpeech,
+              turn.providerUserItemID == nil else { return nil }
+        turn = replacing(turn, providerUserItemID: providerItemID)
+        store(turn)
+        turnByProviderUserItemID[providerItemID] = resolvedTurnID
+        return turn
     }
 
     @discardableResult
@@ -402,6 +420,7 @@ struct ConversationTurnCorrelator {
 
     private func replacing(
         _ turn: ConversationTurnCorrelationSnapshot,
+        providerUserItemID: ConversationProviderItemID? = nil,
         responseID: ConversationResponseID? = nil,
         providerResponseID: ConversationProviderResponseID? = nil,
         assistantItemID: ConversationAssistantItemID? = nil,
@@ -414,7 +433,7 @@ struct ConversationTurnCorrelator {
             sessionID: turn.sessionID,
             turnID: turn.turnID,
             source: turn.source,
-            providerUserItemID: turn.providerUserItemID,
+            providerUserItemID: providerUserItemID ?? turn.providerUserItemID,
             responseID: responseID ?? turn.responseID,
             providerResponseID: providerResponseID ?? turn.providerResponseID,
             assistantItemID: assistantItemID ?? turn.assistantItemID,

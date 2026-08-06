@@ -1,5 +1,5 @@
 // 功能：处理 Talk Provider 事件、本地动作或后台 Work 工具调用及结果回传。
-// 职责：关联用户轮次和模型回复，执行受控插话、播放状态转换、Action/Work 路由、工具回执与结果播报。
+// 职责：关联 Provider VAD 或 client-gate 用户轮次和模型回复，拒绝播放期噪声派生的自动 Response，并在 Action/Work 工具交接完成前保持回应态，处理播放、回执与结果播报。
 // 边界：不负责会话启动、音频采集实现、屏幕捕获实现或诊断持久化。
 
 import Foundation
@@ -13,168 +13,56 @@ extension ConversationCoordinator {
         switch event {
         case .sessionReady:
             recordDiagnostic("provider.session_ready")
-            if state == .connecting {
-                state = .listening
-                presentation.show(expression: .attentive, source: .microphone)
-            }
         case .userSpeechStarted(let providerItemID):
-            guard state != .selectingScreenRegion,
-                  state != .capturingScreenRegion else { return }
-            let interruptedTurn = turnCorrelator.activeTurn
-            let hasActivePlayback = turnCorrelator.activePlaybackID != nil
-            let requiresLocalConfirmation = hasActivePlayback
-                || (state == .assistantPreparing && isProviderResponseOutstanding)
-            if requiresLocalConfirmation, !audioService.hasConfirmedInterruption {
-                if let providerItemID {
-                    suppressedPlaybackSpeechItemIDs.insert(providerItemID)
-                }
-                logger.notice(
-                    "Ignored an unconfirmed speech-start event while an assistant response was active"
-                )
+            guard conversationProvider.endpointMode == .providerVAD else {
                 recordDiagnostic(
-                    "interruption.rejected",
-                    turn: interruptedTurn,
+                    "provider.endpoint_event_ignored",
                     providerUserItemID: providerItemID,
-                    attributes: [
-                        "local_confirmation": "false",
-                        "active_playback": String(hasActivePlayback),
-                        "response_preparing": String(!hasActivePlayback),
-                        "playback_id": turnCorrelator.activePlaybackID?.description ?? "unknown"
-                    ]
+                    attributes: ["event": "speech_started"]
                 )
                 return
             }
-
-            let cancelledScheduledTurn = cancelScheduledUserResponse(
-                reason: "user_continued_speaking"
+            handleUserSpeechStarted(
+                providerItemID: providerItemID,
+                endpointSource: "provider_vad"
             )
-            var interruptedPlayback: (
-                turn: ConversationTurnCorrelationSnapshot?,
-                playedMilliseconds: Int
-            )?
-            if hasActivePlayback {
-                let playedMilliseconds = audioService.stopAssistantPlayback()
-                if let interruptedAssistantItemID = interruptedTurn?.providerAssistantItemID {
-                    conversationProvider.truncateAssistantResponse(
-                        itemID: interruptedAssistantItemID,
-                        audioEndMilliseconds: playedMilliseconds
-                    )
-                }
-                let finishedTurn = turnCorrelator.finishActivePlayback(interrupted: true)
-                conversationProvider.cancelAssistantResponse()
-                isProviderResponseOutstanding = false
-                interruptedPlayback = (finishedTurn ?? interruptedTurn, playedMilliseconds)
-            } else if state == .assistantPreparing, isProviderResponseOutstanding {
-                recordDiagnostic(
-                    "response.cancelled_before_playback",
-                    turn: interruptedTurn,
-                    providerUserItemID: providerItemID,
-                    attributes: [
-                        "cause": "user_continued_speaking",
-                        "active_playback": "false"
-                    ]
-                )
-                if interruptedTurn?.providerResponseID == nil {
-                    uncorrelatedCancelledResponseCount += 1
-                }
-                conversationProvider.cancelAssistantResponse()
-                audioService.finishAssistantPreparation(preserveActiveSpeech: true)
-                isProviderResponseOutstanding = false
-            }
-
-            let previousTurnID = turnCorrelator.activeTurnID
-            guard let turn = turnCorrelator.beginUserTurn(providerItemID: providerItemID),
-                  turn.turnID == turnCorrelator.activeTurnID,
-                  turn.responseState == .awaitingResponse else { return }
-            if turn.turnID != previousTurnID {
-                responseLoopGuard.recordUserTurn()
-                recordDiagnostic(
-                    "loop_guard.reset_for_user_turn",
-                    turn: turn,
-                    providerUserItemID: providerItemID
-                )
-            }
-            var speechAttributes = diagnosticTimeline.recordUserSpeechStarted(
-                turnID: turn.turnID
-            )
-            speechAttributes["active_playback"] = String(hasActivePlayback)
-            speechAttributes["continued_after_endpoint"] = String(
-                cancelledScheduledTurn != nil
-            )
-            recordDiagnostic(
-                "turn.user_speech_started",
-                turn: turn,
-                providerUserItemID: providerItemID,
-                attributes: speechAttributes
-            )
-            markUserSpeechDetected()
-            idleTimeoutTask?.cancel()
-            if let interruptedPlayback {
-                logger.info("Confirmed intentional barge-in during assistant response")
-                recordDiagnostic(
-                    "interruption.confirmed",
-                    turn: interruptedPlayback.turn,
-                    providerUserItemID: providerItemID,
-                    attributes: [
-                        "local_confirmation": "true",
-                        "active_playback": "true",
-                        "interrupting_turn_id": turn.turnID.description,
-                        "played_ms": String(interruptedPlayback.playedMilliseconds)
-                    ]
-                )
-                state = .userSpeaking
-                presentation.show(expression: .interrupted, source: .microphone)
-                scheduleAttentiveExpression()
-            } else {
-                state = .userSpeaking
-                presentation.show(expression: .attentive, source: .microphone)
-            }
         case .userSpeechStopped(let providerItemID):
-            guard state != .selectingScreenRegion,
-                  state != .capturingScreenRegion else { return }
-            if let providerItemID,
-               suppressedPlaybackSpeechItemIDs.contains(providerItemID) {
-                conversationProvider.discardUserAudioItem(providerItemID)
+            guard conversationProvider.endpointMode == .providerVAD else {
                 recordDiagnostic(
-                    "turn.suppressed_audio_discarded",
+                    "provider.endpoint_event_ignored",
                     providerUserItemID: providerItemID,
-                    attributes: [
-                        "response_requested": "false",
-                        "reason": "unconfirmed_during_playback"
-                    ]
+                    attributes: ["event": "speech_stopped"]
                 )
                 return
             }
-            let previousTurnID = turnCorrelator.activeTurnID
-            guard let turn = turnCorrelator.beginUserTurn(providerItemID: providerItemID),
-                  turn.turnID == turnCorrelator.activeTurnID,
-                  turn.responseState == .awaitingResponse else { return }
-            if turn.turnID != previousTurnID {
-                responseLoopGuard.recordUserTurn()
+            handleUserSpeechStopped(
+                providerItemID: providerItemID,
+                endpointSource: "provider_vad"
+            )
+        case .userAudioCommitted(let providerItemID):
+            if suppressedPlaybackSpeechItemIDs.contains(providerItemID) {
+                registerSuppressedResponseRejection(for: providerItemID)
                 recordDiagnostic(
-                    "loop_guard.reset_for_user_turn",
-                    turn: turn,
+                    "provider.user_audio_committed_suppressed",
                     providerUserItemID: providerItemID
                 )
+                return
             }
-            let stopAttributes = diagnosticTimeline.recordUserSpeechStopped(
-                turnID: turn.turnID
-            )
-            if let rawDuration = stopAttributes["provider_speech_duration_ms"],
-               let duration = Int(rawDuration) {
-                providerSpeechDurationMillisecondsByTurn[turn.turnID] = duration
-            }
+            let correlatedTurn = turnCorrelator.attachProviderUserItemID(providerItemID)
+            attachLiveUserTranscriptItem(providerItemID, to: correlatedTurn)
             recordDiagnostic(
-                "turn.user_speech_stopped",
-                turn: turn,
-                providerUserItemID: providerItemID,
-                attributes: stopAttributes
+                "provider.user_audio_committed",
+                turn: correlatedTurn,
+                providerUserItemID: providerItemID
             )
-            turnCorrelator.markActiveTurnAwaitingResponse()
-            state = .assistantPreparing
-            presentation.show(expression: .awake, source: .assistant)
-            scheduleUserResponse(for: turn)
+        case .userTranscriptionDelta(let providerDelta):
+            guard !suppressedPlaybackSpeechItemIDs.contains(providerDelta.itemID),
+                  let correlatedTurn = turnCorrelator.snapshot(for: providerDelta.itemID),
+                  correlatedTurn.source == .userSpeech,
+                  correlatedTurn.turnID == turnCorrelator.activeTurnID else { return }
+            appendLiveUserTranscript(providerDelta, turn: correlatedTurn)
         case .userTranscriptionCompleted(let providerTranscript):
+            recordTranscriptionUsageIfNeeded(providerTranscript)
             if suppressedPlaybackSpeechItemIDs.remove(providerTranscript.itemID) != nil {
                 recordDiagnostic(
                     "provider.user_transcription_suppressed",
@@ -200,6 +88,11 @@ extension ConversationCoordinator {
                 workBridge.markFinalTranscriptUnavailable(for: correlatedTurn.turnID)
                 return
             }
+            finishLiveUserTranscript(
+                text: text,
+                itemID: providerTranscript.itemID,
+                turn: correlatedTurn
+            )
             workBridge.recordFinalTranscript(
                 FinalUserTranscript(
                     turnID: correlatedTurn.turnID,
@@ -231,6 +124,18 @@ extension ConversationCoordinator {
             )
             workBridge.markFinalTranscriptUnavailable(for: correlatedTurn.turnID)
         case .assistantResponseStarted(let providerResponseID):
+            if let providerResponseID,
+               let suppressedItemID = consumeSuppressedResponseRejection() {
+                suppressedProviderResponseIDs.insert(providerResponseID)
+                recordDiagnostic(
+                    "response.rejected_for_suppressed_audio",
+                    providerUserItemID: suppressedItemID,
+                    providerResponseID: providerResponseID,
+                    attributes: ["bounded_rejection": "true"]
+                )
+                conversationProvider.cancelAssistantResponse()
+                return
+            }
             if uncorrelatedCancelledResponseCount > 0 {
                 uncorrelatedCancelledResponseCount -= 1
                 recordDiagnostic(
@@ -281,8 +186,12 @@ extension ConversationCoordinator {
             idleTimeoutTask?.cancel()
             isProviderResponseOutstanding = true
             state = .assistantPreparing
+            if conversationProvider.endpointMode == .providerVAD {
+                audioService.prepareForAssistantResponse()
+            }
             presentation.show(expression: .awake, source: .assistant)
         case .assistantItemStarted(let identity):
+            guard !isSuppressedProviderResponse(identity.responseID) else { return }
             guard state != .selectingScreenRegion,
                   state != .capturingScreenRegion else { return }
             guard let turn = turnCorrelator.beginAssistantItem(identity: identity),
@@ -298,10 +207,13 @@ extension ConversationCoordinator {
             )
             audioService.beginAssistantResponse()
         case .assistantPlaybackStarted(let identity):
+            guard !isSuppressedProviderResponse(identity.responseID) else { return }
             beginAssistantPlayback(identity: identity, audioData: nil)
         case .assistantAudio(let identity, let data):
+            guard !isSuppressedProviderResponse(identity.responseID) else { return }
             beginAssistantPlayback(identity: identity, audioData: data)
         case .assistantAudioFinished(let identity):
+            guard !isSuppressedProviderResponse(identity.responseID) else { return }
             guard state != .selectingScreenRegion,
                   state != .capturingScreenRegion else { return }
             guard turnCorrelator.snapshot(for: identity)?.turnID
@@ -317,9 +229,13 @@ extension ConversationCoordinator {
                 } ?? [:]
             )
             audioService.markAssistantAudioFinished()
-        case .assistantTranscriptDelta:
-            break
+        case .assistantTranscriptDelta(let identity, let delta):
+            guard !isSuppressedProviderResponse(identity.responseID) else { return }
+            guard let correlatedTurn = turnCorrelator.snapshot(for: identity),
+                  correlatedTurn.turnID == turnCorrelator.activeTurnID else { return }
+            appendLiveAssistantTranscript(delta, turn: correlatedTurn)
         case .toolCall(let call):
+            registerPendingToolCall(call)
             diagnosticTimeline.recordToolCall(call.callID)
             recordDiagnostic(
                 "provider.tool_call",
@@ -334,12 +250,22 @@ extension ConversationCoordinator {
                 ?? turnCorrelator.activeTurn?.turnID
             handleToolCall(call, sourceTurnID: sourceTurnID)
         case .responseCompleted(let providerResponseID, let usage):
+            if removeSuppressedProviderResponse(providerResponseID) {
+                recordDiagnostic(
+                    "provider.suppressed_response_completed",
+                    providerResponseID: providerResponseID
+                )
+                return
+            }
+            let isAwaitingToolHandoff = providerResponseID.map {
+                pendingToolCallIDsByResponseID[$0]?.isEmpty == false
+            } ?? false
             let correlatedTurn = turnCorrelator.finishResponse(
                 providerResponseID: providerResponseID,
                 cancelled: false
             )
             if correlatedTurn?.turnID == turnCorrelator.activeTurnID {
-                isProviderResponseOutstanding = false
+                isProviderResponseOutstanding = isAwaitingToolHandoff
             }
             var completionAttributes: [String: String] = [
                 "total_tokens": String(usage.totalTokens),
@@ -357,7 +283,10 @@ extension ConversationCoordinator {
                 providerResponseID: providerResponseID,
                 attributes: completionAttributes
             )
-            if correlatedTurn?.playbackState == .idle,
+            if correlatedTurn.map({
+                $0.playbackState == .idle || $0.playbackState == .delivered
+            }) == true,
+               !isAwaitingToolHandoff,
                state != .userSpeaking,
                state != .selectingScreenRegion,
                state != .capturingScreenRegion {
@@ -365,6 +294,13 @@ extension ConversationCoordinator {
                 state = .listening
                 presentation.show(expression: .attentive, source: .microphone)
                 scheduleIdleTimeout()
+            } else if isAwaitingToolHandoff,
+                      correlatedTurn?.playbackState != .playing,
+                      state != .userSpeaking,
+                      state != .selectingScreenRegion,
+                      state != .capturingScreenRegion {
+                state = .assistantPreparing
+                presentation.show(expression: .awake, source: .assistant)
             }
             let update = sessionLedger.record(usage)
             if update.didRecord {
@@ -399,6 +335,13 @@ extension ConversationCoordinator {
             }
             deliverNextCompletedWorkIfPossible()
         case .responseCancelled(let providerResponseID):
+            if removeSuppressedProviderResponse(providerResponseID) {
+                recordDiagnostic(
+                    "provider.suppressed_response_cancelled",
+                    providerResponseID: providerResponseID
+                )
+                return
+            }
             let activePlaybackID = turnCorrelator.activePlaybackID
             let correlatedTurn = turnCorrelator.finishResponse(
                 providerResponseID: providerResponseID,
@@ -457,6 +400,215 @@ extension ConversationCoordinator {
         }
     }
 
+    func handleUserSpeechStarted(
+        providerItemID: ConversationProviderItemID?,
+        endpointSource: String
+    ) {
+        guard state != .selectingScreenRegion,
+              state != .capturingScreenRegion else { return }
+        let interruptedTurn = turnCorrelator.activeTurn
+        let hasActivePlayback = turnCorrelator.activePlaybackID != nil
+        let requiresLocalConfirmation = hasActivePlayback
+            || (state == .assistantPreparing && isProviderResponseOutstanding)
+        if requiresLocalConfirmation,
+           !conversationProvider.allowsResponseInterruption {
+            if let providerItemID {
+                suppressedPlaybackSpeechItemIDs.insert(providerItemID)
+            }
+            recordDiagnostic(
+                "interruption.rejected",
+                turn: interruptedTurn,
+                providerUserItemID: providerItemID,
+                attributes: [
+                    "response_interruption": "disabled",
+                    "active_playback": String(hasActivePlayback),
+                    "response_preparing": String(!hasActivePlayback),
+                    "endpoint_source": endpointSource
+                ]
+            )
+            return
+        }
+        if requiresLocalConfirmation, !audioService.hasConfirmedInterruption {
+            if let providerItemID {
+                suppressedPlaybackSpeechItemIDs.insert(providerItemID)
+            }
+            logger.notice(
+                "Ignored an unconfirmed speech-start event while an assistant response was active"
+            )
+            recordDiagnostic(
+                "interruption.rejected",
+                turn: interruptedTurn,
+                providerUserItemID: providerItemID,
+                attributes: [
+                    "local_confirmation": "false",
+                    "active_playback": String(hasActivePlayback),
+                    "response_preparing": String(!hasActivePlayback),
+                    "playback_id": turnCorrelator.activePlaybackID?.description ?? "unknown",
+                    "endpoint_source": endpointSource
+                ]
+            )
+            return
+        }
+
+        let cancelledScheduledTurn = cancelScheduledUserResponse(
+            reason: "user_continued_speaking"
+        )
+        var interruptedPlayback: (
+            turn: ConversationTurnCorrelationSnapshot?,
+            playedMilliseconds: Int
+        )?
+        if hasActivePlayback {
+            let playedMilliseconds = audioService.stopAssistantPlayback()
+            if let interruptedAssistantItemID = interruptedTurn?.providerAssistantItemID {
+                conversationProvider.truncateAssistantResponse(
+                    itemID: interruptedAssistantItemID,
+                    audioEndMilliseconds: playedMilliseconds
+                )
+            }
+            let finishedTurn = turnCorrelator.finishActivePlayback(interrupted: true)
+            conversationProvider.cancelAssistantResponse()
+            isProviderResponseOutstanding = false
+            interruptedPlayback = (finishedTurn ?? interruptedTurn, playedMilliseconds)
+        } else if state == .assistantPreparing, isProviderResponseOutstanding {
+            recordDiagnostic(
+                "response.cancelled_before_playback",
+                turn: interruptedTurn,
+                providerUserItemID: providerItemID,
+                attributes: [
+                    "cause": "user_continued_speaking",
+                    "active_playback": "false",
+                    "endpoint_source": endpointSource
+                ]
+            )
+            if interruptedTurn?.providerResponseID == nil {
+                uncorrelatedCancelledResponseCount += 1
+            }
+            conversationProvider.cancelAssistantResponse()
+            audioService.finishAssistantPreparation(preserveActiveSpeech: true)
+            isProviderResponseOutstanding = false
+        }
+
+        let previousTurnID = turnCorrelator.activeTurnID
+        guard let turn = turnCorrelator.beginUserTurn(providerItemID: providerItemID),
+              turn.turnID == turnCorrelator.activeTurnID,
+              turn.responseState == .awaitingResponse else { return }
+        beginLiveUserTranscript(turn)
+        if turn.turnID != previousTurnID {
+            responseLoopGuard.recordUserTurn()
+            recordDiagnostic(
+                "loop_guard.reset_for_user_turn",
+                turn: turn,
+                providerUserItemID: providerItemID
+            )
+        }
+        var speechAttributes = diagnosticTimeline.recordUserSpeechStarted(
+            turnID: turn.turnID
+        )
+        speechAttributes["active_playback"] = String(hasActivePlayback)
+        speechAttributes["continued_after_endpoint"] = String(
+            cancelledScheduledTurn != nil
+        )
+        speechAttributes["endpoint_source"] = endpointSource
+        recordDiagnostic(
+            "turn.user_speech_started",
+            turn: turn,
+            providerUserItemID: providerItemID,
+            attributes: speechAttributes
+        )
+        markUserSpeechDetected()
+        idleTimeoutTask?.cancel()
+        if let interruptedPlayback {
+            logger.info("Confirmed intentional barge-in during assistant response")
+            recordDiagnostic(
+                "interruption.confirmed",
+                turn: interruptedPlayback.turn,
+                providerUserItemID: providerItemID,
+                attributes: [
+                    "local_confirmation": "true",
+                    "active_playback": "true",
+                    "interrupting_turn_id": turn.turnID.description,
+                    "played_ms": String(interruptedPlayback.playedMilliseconds),
+                    "endpoint_source": endpointSource
+                ]
+            )
+            state = .userSpeaking
+            presentation.show(expression: .interrupted, source: .microphone)
+            scheduleAttentiveExpression()
+        } else {
+            state = .userSpeaking
+            presentation.show(expression: .attentive, source: .microphone)
+        }
+    }
+
+    func handleUserSpeechStopped(
+        providerItemID: ConversationProviderItemID?,
+        endpointSource: String
+    ) {
+        guard state != .selectingScreenRegion,
+              state != .capturingScreenRegion else { return }
+        if let providerItemID,
+           suppressedPlaybackSpeechItemIDs.contains(providerItemID) {
+            registerSuppressedResponseRejection(for: providerItemID)
+            conversationProvider.discardUserAudioItem(providerItemID)
+            recordDiagnostic(
+                "turn.suppressed_audio_discarded",
+                providerUserItemID: providerItemID,
+                attributes: [
+                    "response_requested": "false",
+                    "reason": "unconfirmed_during_playback",
+                    "endpoint_source": endpointSource
+                ]
+            )
+            return
+        }
+        let previousTurnID = turnCorrelator.activeTurnID
+        guard let turn = turnCorrelator.beginUserTurn(providerItemID: providerItemID),
+              turn.turnID == turnCorrelator.activeTurnID,
+              turn.responseState == .awaitingResponse else { return }
+        stopLiveUserTranscript(turn)
+        if turn.turnID != previousTurnID {
+            responseLoopGuard.recordUserTurn()
+            recordDiagnostic(
+                "loop_guard.reset_for_user_turn",
+                turn: turn,
+                providerUserItemID: providerItemID
+            )
+        }
+        var stopAttributes = diagnosticTimeline.recordUserSpeechStopped(
+            turnID: turn.turnID
+        )
+        stopAttributes["endpoint_source"] = endpointSource
+        if let rawDuration = stopAttributes["provider_speech_duration_ms"],
+           let duration = Int(rawDuration) {
+            providerSpeechDurationMillisecondsByTurn[turn.turnID] = duration
+        }
+        recordDiagnostic(
+            "turn.user_speech_stopped",
+            turn: turn,
+            providerUserItemID: providerItemID,
+            attributes: stopAttributes
+        )
+        turnCorrelator.markActiveTurnAwaitingResponse()
+        state = .assistantPreparing
+        presentation.show(expression: .awake, source: .assistant)
+        if conversationProvider.endpointMode == .providerVAD {
+            isProviderResponseOutstanding = true
+            audioService.prepareForAssistantResponse()
+            var responseAttributes = diagnosticTimeline.recordResponseRequested(
+                turnID: turn.turnID
+            )
+            responseAttributes["create_response"] = "true"
+            responseAttributes["manual_request"] = "false"
+            recordDiagnostic(
+                "response.provider_managed",
+                turn: turn,
+                attributes: responseAttributes
+            )
+        } else {
+            scheduleUserResponse(for: turn)
+        }
+    }
+
     private func beginAssistantPlayback(
         identity: ConversationProviderEventIdentity,
         audioData: Data?
@@ -511,6 +663,14 @@ extension ConversationCoordinator {
             resolutionAttributes["status"] = diagnosticToolStatus(
                 from: resolution.output
             )
+            if let errorCode = diagnosticToolErrorCode(from: resolution.output) {
+                resolutionAttributes["error_code"] = errorCode
+            }
+            if let permission = diagnosticToolAccessibilityPermission(
+                from: resolution.output
+            ) {
+                resolutionAttributes["accessibility_permission"] = permission
+            }
             resolutionAttributes["creates_response"] = "true"
             recordDiagnostic(
                 "tool.resolved",
@@ -538,7 +698,9 @@ extension ConversationCoordinator {
                         "creates_response": "true"
                     ]
                 )
+                finishPendingToolCall(call)
             } catch {
+                finishPendingToolCall(call)
                 isProviderResponseOutstanding = false
                 recordDiagnostic(
                     "tool.output_failed",
@@ -552,7 +714,8 @@ extension ConversationCoordinator {
                     "任务状态已保留，但语音确认没有发出",
                     hidesOverlay: false
                 )
-                if state != .userSpeaking {
+                if state != .userSpeaking,
+                   turnCorrelator.activePlaybackID == nil {
                     state = .listening
                     presentation.show(expression: .attentive, source: .microphone)
                     scheduleIdleTimeout()
@@ -603,7 +766,9 @@ extension ConversationCoordinator {
                     attributes: attributes
                 )
                 didSendToolOutput = true
+                finishPendingToolCall(call)
             } catch {
+                finishPendingToolCall(call)
                 logger.warning("Unable to acknowledge wait_for_user tool call")
                 recordDiagnostic(
                     "tool.output_failed",
@@ -722,6 +887,79 @@ extension ConversationCoordinator {
             }
             workDeliveryTask = nil
         }
+    }
+
+    private func registerSuppressedResponseRejection(
+        for itemID: ConversationProviderItemID
+    ) {
+        let now = Date()
+        pendingSuppressedResponseRejections = pendingSuppressedResponseRejections.filter {
+            $0.value > now
+        }
+        pendingSuppressedResponseRejections[itemID] = now.addingTimeInterval(
+            Self.suppressedResponseRejectionWindow
+        )
+    }
+
+    private func consumeSuppressedResponseRejection() -> ConversationProviderItemID? {
+        let now = Date()
+        pendingSuppressedResponseRejections = pendingSuppressedResponseRejections.filter {
+            $0.value > now
+        }
+        guard let pending = pendingSuppressedResponseRejections.min(by: {
+            $0.value < $1.value
+        }) else { return nil }
+        pendingSuppressedResponseRejections.removeValue(forKey: pending.key)
+        return pending.key
+    }
+
+    private func isSuppressedProviderResponse(
+        _ responseID: ConversationProviderResponseID?
+    ) -> Bool {
+        responseID.map(suppressedProviderResponseIDs.contains) ?? false
+    }
+
+    private func removeSuppressedProviderResponse(
+        _ responseID: ConversationProviderResponseID?
+    ) -> Bool {
+        guard let responseID else { return false }
+        return suppressedProviderResponseIDs.remove(responseID) != nil
+    }
+
+    private func registerPendingToolCall(_ call: ConversationToolCall) {
+        guard let responseID = call.responseID else { return }
+        pendingToolCallIDsByResponseID[responseID, default: []].insert(call.callID)
+    }
+
+    private func finishPendingToolCall(_ call: ConversationToolCall) {
+        guard let responseID = call.responseID,
+              var callIDs = pendingToolCallIDsByResponseID[responseID] else { return }
+        callIDs.remove(call.callID)
+        if callIDs.isEmpty {
+            pendingToolCallIDsByResponseID.removeValue(forKey: responseID)
+        } else {
+            pendingToolCallIDsByResponseID[responseID] = callIDs
+        }
+    }
+
+    private func recordTranscriptionUsageIfNeeded(
+        _ transcript: ConversationInputTranscription
+    ) {
+        guard recordedTranscriptionItemIDs.insert(transcript.itemID).inserted,
+              let usage = transcript.usage else { return }
+        let update = sessionLedger.recordTranscription(usage)
+        guard update.didRecord else { return }
+        sessionSnapshot = update.snapshot
+        recordDiagnostic(
+            "provider.transcription_usage_recorded",
+            providerUserItemID: transcript.itemID,
+            attributes: [
+                "audio_milliseconds": usage.audioSeconds.map {
+                    String(Int($0 * 1_000))
+                } ?? "unavailable",
+                "cost_micro_usd": String(Int(update.costUSD * 1_000_000))
+            ]
+        )
     }
 
 }

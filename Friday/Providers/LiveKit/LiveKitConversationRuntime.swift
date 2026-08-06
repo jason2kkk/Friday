@@ -17,7 +17,7 @@ enum LiveKitStageZeroError: LocalizedError {
         case .missingRoomToken:
             return "LiveKit 短期 Room Token 缺失。"
         case .recordingMustBeDisabled:
-            return "Friday 的 LiveKit 会话必须明确关闭录制。"
+            return "Olli 的 LiveKit 会话必须明确关闭录制。"
         case .missingModel:
             return "LiveKit Realtime 模型未配置。"
         }

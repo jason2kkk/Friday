@@ -59,6 +59,7 @@ final class RealtimeDictationProvider: DictationProvider {
     private var audioSenderTask: Task<Error?, Never>?
     private var activeContext: DictationContext?
     private var expectsInputTranscript = false
+    private var sessionStartedAt: Date?
 
     init(
         credentialEndpoint: URL? = RealtimeConfiguration.credentialEndpoint,
@@ -72,7 +73,13 @@ final class RealtimeDictationProvider: DictationProvider {
         guard activeContext == nil else { throw RealtimeError.sessionAlreadyActive }
         guard let credentialEndpoint else { throw RealtimeError.invalidCredentialEndpoint }
 
+        let sessionStart = Date()
+        sessionStartedAt = sessionStart
+        let credentialStart = Date()
         let credential = try await fetchCredential(from: credentialEndpoint)
+        logger.info(
+            "Dictate stage=credential_ready elapsed_ms=\(self.elapsedMilliseconds(since: sessionStart), privacy: .public) request_ms=\(self.elapsedMilliseconds(since: credentialStart), privacy: .public)"
+        )
         guard var components = URLComponents(string: credential.realtimeURL) else {
             throw RealtimeError.invalidCredentialResponse
         }
@@ -94,7 +101,9 @@ final class RealtimeDictationProvider: DictationProvider {
         audioBuffer.removeAll(keepingCapacity: true)
         socket.resume()
         startAudioSender(for: socket)
-        logger.info("Realtime session started for model \(credential.model, privacy: .public)")
+        logger.info(
+            "Dictate stage=socket_started elapsed_ms=\(self.elapsedMilliseconds(since: sessionStart), privacy: .public) model=\(credential.model, privacy: .public) input_transcription_wait=\(self.expectsInputTranscript, privacy: .public)"
+        )
     }
 
     func append(_ chunk: AudioChunk) {
@@ -115,6 +124,8 @@ final class RealtimeDictationProvider: DictationProvider {
             throw RealtimeError.noSession
         }
 
+        let finishStart = Date()
+
         if !audioBuffer.isEmpty {
             audioContinuation?.yield(audioBuffer)
             audioBuffer.removeAll(keepingCapacity: true)
@@ -127,9 +138,15 @@ final class RealtimeDictationProvider: DictationProvider {
             throw RealtimeError.transport(senderError.localizedDescription)
         }
         audioSenderTask = nil
+        logger.info(
+            "Dictate stage=audio_upload_finished elapsed_ms=\(self.elapsedMilliseconds(since: finishStart), privacy: .public) session_ms=\(self.elapsedMillisecondsSinceSessionStart(), privacy: .public)"
+        )
 
         do {
             try await sendJSON(["type": "input_audio_buffer.commit"], over: socket)
+            logger.info(
+                "Dictate stage=commit_sent elapsed_ms=\(self.elapsedMilliseconds(since: finishStart), privacy: .public) session_ms=\(self.elapsedMillisecondsSinceSessionStart(), privacy: .public)"
+            )
             try await sendJSON(
                 [
                     "type": "response.create",
@@ -141,13 +158,24 @@ final class RealtimeDictationProvider: DictationProvider {
                 ],
                 over: socket
             )
+            logger.info(
+                "Dictate stage=response_requested elapsed_ms=\(self.elapsedMilliseconds(since: finishStart), privacy: .public) session_ms=\(self.elapsedMillisecondsSinceSessionStart(), privacy: .public)"
+            )
 
             let result = try await receiveResultWithTimeout(from: socket)
+            logger.info(
+                "Dictate stage=final_result elapsed_ms=\(self.elapsedMilliseconds(since: finishStart), privacy: .public) session_ms=\(self.elapsedMillisecondsSinceSessionStart(), privacy: .public) input_transcription_wait=\(self.expectsInputTranscript, privacy: .public)"
+            )
             resetSession(cancelSocket: false)
             socket.cancel(with: .normalClosure, reason: nil)
-            logger.info("Realtime response completed with \(result.usage.totalTokens) total tokens")
+            logger.info(
+                "Dictate stage=returned elapsed_ms=\(self.elapsedMilliseconds(since: finishStart), privacy: .public) total_tokens=\(result.usage.totalTokens, privacy: .public)"
+            )
             return result
         } catch {
+            logger.error(
+                "Dictate stage=failed elapsed_ms=\(self.elapsedMilliseconds(since: finishStart), privacy: .public) session_ms=\(self.elapsedMillisecondsSinceSessionStart(), privacy: .public) error_type=\(String(describing: type(of: error)), privacy: .public)"
+            )
             resetSession(cancelSocket: true)
             throw error
         }
@@ -247,6 +275,8 @@ final class RealtimeDictationProvider: DictationProvider {
         from socket: URLSessionWebSocketTask
     ) async throws -> DictationResult {
         var parser = RealtimeEventParser(expectsInputTranscript: expectsInputTranscript)
+        var firstEventLogged = false
+        var responseDoneAt: Date?
 
         while !Task.isCancelled {
             let message = try await socket.receive()
@@ -262,6 +292,25 @@ final class RealtimeDictationProvider: DictationProvider {
 
             guard let event = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   event["type"] is String else { continue }
+
+            let eventType = event["type"] as? String ?? "unknown"
+            if !firstEventLogged {
+                firstEventLogged = true
+                logger.info(
+                    "Dictate stage=first_event elapsed_ms=\(self.elapsedMillisecondsSinceSessionStart(), privacy: .public) event=\(eventType, privacy: .public)"
+                )
+            }
+            if eventType == "response.done" {
+                responseDoneAt = Date()
+                logger.info(
+                    "Dictate stage=response_done elapsed_ms=\(self.elapsedMillisecondsSinceSessionStart(), privacy: .public)"
+                )
+            } else if eventType == "conversation.item.input_audio_transcription.completed" {
+                let waitMilliseconds = responseDoneAt.map { self.elapsedMilliseconds(since: $0) } ?? -1
+                logger.info(
+                    "Dictate stage=input_transcription_completed elapsed_ms=\(self.elapsedMillisecondsSinceSessionStart(), privacy: .public) after_response_ms=\(waitMilliseconds, privacy: .public)"
+                )
+            }
 
             switch try parser.consume(event) {
             case .ignored:
@@ -285,11 +334,21 @@ final class RealtimeDictationProvider: DictationProvider {
         audioBuffer.removeAll(keepingCapacity: false)
         activeContext = nil
         expectsInputTranscript = false
+        sessionStartedAt = nil
 
         if cancelSocket {
             webSocket?.cancel(with: .goingAway, reason: nil)
         }
         webSocket = nil
+    }
+
+    private func elapsedMilliseconds(since date: Date) -> Int {
+        max(0, Int(Date().timeIntervalSince(date) * 1_000))
+    }
+
+    private func elapsedMillisecondsSinceSessionStart() -> Int {
+        guard let sessionStartedAt else { return 0 }
+        return elapsedMilliseconds(since: sessionStartedAt)
     }
 }
 

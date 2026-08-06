@@ -1,5 +1,5 @@
-// 功能：为 Talk 同时采集用户麦克风并播放 Friday 的流式语音，提供可插话且不会自我打断的音频通道。
-// 职责：优先编排 VoiceProcessingIO 全双工 AEC，失败时使用 AVAudioEngine 半双工降级，并管理近场输入门、Realtime 端点静音交接、PCM 转换、播放完成和双向音量。
+// 功能：为 Talk 同时采集用户麦克风并播放 Friday 的流式语音，按端点所有权提供连续或门控的 Realtime 上行音频。
+// 职责：优先编排 VoiceProcessingIO 全双工 AEC，失败时使用 AVAudioEngine 半双工降级；Provider VAD 模式转发普通 PCM，并在播放期仅放行本地确认的人声候选以支持安全插话。
 // 边界：不建立网络会话、不理解语音内容、不保存原始音频；设备失败只通过类型化错误和回调交给协调器处理。
 
 @preconcurrency import AVFoundation
@@ -72,11 +72,42 @@ enum ConversationInputGateReleaseReason: String, Equatable {
     case stableBackground = "stable_background"
 }
 
+enum ConversationInputGateCandidateResetReason: String, Equatable {
+    case gapToleranceExceeded = "gap_tolerance_exceeded"
+    case windowExpired = "window_expired"
+}
+
+struct ConversationInputGateCandidateSnapshot: Equatable {
+    let reason: ConversationInputGateCandidateResetReason
+    let interruption: Bool
+    let voicedMilliseconds: Int
+    let windowMilliseconds: Int
+    let gapMilliseconds: Int
+    let activationThreshold: Float
+    let peakLevel: Float
+}
+
 enum ConversationInputGateTransition: Equatable {
     case candidateStarted(interruption: Bool)
+    case candidateReset(ConversationInputGateCandidateSnapshot)
     case speechConfirmed(interruption: Bool)
     case speechReleased(reason: ConversationInputGateReleaseReason)
     case endpointSilenceExhausted
+
+    var diagnosticName: String {
+        switch self {
+        case .candidateStarted:
+            return "candidate_started"
+        case .candidateReset:
+            return "candidate_reset"
+        case .speechConfirmed:
+            return "speech_confirmed"
+        case .speechReleased:
+            return "speech_released"
+        case .endpointSilenceExhausted:
+            return "endpoint_silence_exhausted"
+        }
+    }
 }
 
 struct ConversationInputGate {
@@ -86,6 +117,9 @@ struct ConversationInputGate {
     private var speechIsActive = false
     private var ambientBaseline: Float = 0.08
     private var candidateVoiceFrames = 0
+    private var candidateWindowFrames = 0
+    private var candidateGapFrames = 0
+    private var candidateActivationThreshold: Float = 0
     private var trailingSilenceFrames = 0
     private var candidateMinimumLevel: Float = 1
     private var candidateMaximumLevel: Float = 0
@@ -107,8 +141,10 @@ struct ConversationInputGate {
     private static let sampleRate = 24_000
     private static let maximumPreRollFrames = Int(Double(sampleRate) * 0.45)
     private static let listeningCandidateFrames = Int(Double(sampleRate) * 0.14)
-    private static let interruptionCandidateFrames = Int(Double(sampleRate) * 0.38)
-    private static let strongInterruptionCandidateFrames = Int(Double(sampleRate) * 0.26)
+    private static let interruptionCandidateFrames = Int(Double(sampleRate) * 0.30)
+    private static let strongInterruptionCandidateFrames = Int(Double(sampleRate) * 0.20)
+    private static let maximumCandidateWindowFrames = Int(Double(sampleRate) * 0.75)
+    private static let candidateGapToleranceFrames = Int(Double(sampleRate) * 0.18)
     private static let trailingSilenceFrames = Int(Double(sampleRate) * 0.55)
     private static let stableTailAnalysisFrames = Int(Double(sampleRate) * 0.45)
     private static let stableTailEndpointFrames = Int(Double(sampleRate) * 0.40)
@@ -133,6 +169,9 @@ struct ConversationInputGate {
         hasConfirmedSpeech = false
         speechIsActive = false
         candidateVoiceFrames = 0
+        candidateWindowFrames = 0
+        candidateGapFrames = 0
+        candidateActivationThreshold = 0
         trailingSilenceFrames = 0
         resetCandidateProfile()
         resetActiveTailProfile()
@@ -144,6 +183,9 @@ struct ConversationInputGate {
     mutating func inputForRealtime(_ chunk: AudioChunk) -> [AudioChunk] {
         if isAssistantPlaying, !allowsInterruption {
             candidateVoiceFrames = 0
+            candidateWindowFrames = 0
+            candidateGapFrames = 0
+            candidateActivationThreshold = 0
             trailingSilenceFrames = 0
             resetCandidateProfile()
             resetActiveTailProfile()
@@ -211,18 +253,24 @@ struct ConversationInputGate {
         }
 
         if chunk.normalizedLevel >= activationThreshold {
-            let wasIdle = candidateVoiceFrames == 0
+            let wasIdle = candidateWindowFrames == 0
+            if wasIdle {
+                candidateActivationThreshold = activationThreshold
+            }
             candidateVoiceFrames += chunk.frameCount
+            candidateWindowFrames += chunk.frameCount
+            candidateGapFrames = 0
             updateCandidateProfile(with: chunk.normalizedLevel)
             if wasIdle {
                 pendingTransitions.append(
                     .candidateStarted(interruption: isAssistantPlaying)
                 )
             }
-        } else {
-            candidateVoiceFrames = max(0, candidateVoiceFrames - chunk.frameCount * 2)
-            if candidateVoiceFrames == 0 {
-                resetCandidateProfile()
+        } else if candidateWindowFrames > 0 {
+            candidateWindowFrames += chunk.frameCount
+            candidateGapFrames += chunk.frameCount
+            if candidateGapFrames >= Self.candidateGapToleranceFrames {
+                resetCandidateTracking(reporting: .gapToleranceExceeded)
             }
         }
 
@@ -235,18 +283,16 @@ struct ConversationInputGate {
                 && candidateMaximumLevel >= 0.72
                 && candidateLooksSpeechLike
             guard hasNormalInterruption || hasStrongInterruption else {
-                if candidateVoiceFrames >= Self.interruptionCandidateFrames {
-                    candidateVoiceFrames = 0
-                    resetCandidateProfile()
+                if candidateWindowFrames >= Self.maximumCandidateWindowFrames {
+                    resetCandidateTracking(reporting: .windowExpired)
                 }
                 return endpointSilenceOutput(for: chunk)
             }
         } else {
             guard candidateVoiceFrames >= Self.listeningCandidateFrames,
                   candidateLooksSpeechLike else {
-                if candidateVoiceFrames >= Self.maximumPreRollFrames {
-                    candidateVoiceFrames = 0
-                    resetCandidateProfile()
+                if candidateWindowFrames >= Self.maximumCandidateWindowFrames {
+                    resetCandidateTracking(reporting: .windowExpired)
                 }
                 return endpointSilenceOutput(for: chunk)
             }
@@ -274,10 +320,28 @@ struct ConversationInputGate {
         if !preserveActiveSpeech {
             speechIsActive = false
             candidateVoiceFrames = 0
+            candidateWindowFrames = 0
+            candidateGapFrames = 0
+            candidateActivationThreshold = 0
             trailingSilenceFrames = 0
             resetCandidateProfile()
             resetActiveTailProfile()
         }
+        preRoll.removeAll(keepingCapacity: true)
+        preRollFrameCount = 0
+    }
+
+    mutating func completeUserTurnEndpoint() {
+        hasConfirmedSpeech = false
+        speechIsActive = false
+        candidateVoiceFrames = 0
+        candidateWindowFrames = 0
+        candidateGapFrames = 0
+        candidateActivationThreshold = 0
+        trailingSilenceFrames = 0
+        endpointSilenceFramesRemaining = 0
+        resetCandidateProfile()
+        resetActiveTailProfile()
         preRoll.removeAll(keepingCapacity: true)
         preRollFrameCount = 0
     }
@@ -288,7 +352,7 @@ struct ConversationInputGate {
 
     private var currentActivationThreshold: Float {
         if isAssistantPlaying {
-            return min(0.70, max(0.50, ambientBaseline + 0.26))
+            return min(0.66, max(0.46, ambientBaseline + 0.22))
         }
         return min(0.48, max(0.24, ambientBaseline + 0.12))
     }
@@ -327,6 +391,35 @@ struct ConversationInputGate {
         previousCandidateLevel = nil
     }
 
+    private mutating func resetCandidateTracking(
+        reporting reason: ConversationInputGateCandidateResetReason? = nil
+    ) {
+        if let reason, candidateWindowFrames > 0 {
+            pendingTransitions.append(
+                .candidateReset(
+                    ConversationInputGateCandidateSnapshot(
+                        reason: reason,
+                        interruption: isAssistantPlaying,
+                        voicedMilliseconds: milliseconds(for: candidateVoiceFrames),
+                        windowMilliseconds: milliseconds(for: candidateWindowFrames),
+                        gapMilliseconds: milliseconds(for: candidateGapFrames),
+                        activationThreshold: candidateActivationThreshold,
+                        peakLevel: candidateMaximumLevel
+                    )
+                )
+            )
+        }
+        candidateVoiceFrames = 0
+        candidateWindowFrames = 0
+        candidateGapFrames = 0
+        candidateActivationThreshold = 0
+        resetCandidateProfile()
+    }
+
+    private func milliseconds(for frames: Int) -> Int {
+        frames * 1_000 / Self.sampleRate
+    }
+
     private mutating func updateActiveTailProfile(with chunk: AudioChunk) {
         if let previousActiveTailLevel,
            abs(chunk.normalizedLevel - previousActiveTailLevel)
@@ -357,6 +450,9 @@ struct ConversationInputGate {
     private mutating func releaseSpeech(reason: ConversationInputGateReleaseReason) {
         speechIsActive = false
         candidateVoiceFrames = 0
+        candidateWindowFrames = 0
+        candidateGapFrames = 0
+        candidateActivationThreshold = 0
         trailingSilenceFrames = 0
         resetCandidateProfile()
         resetActiveTailProfile()
@@ -389,6 +485,26 @@ struct ConversationInputGate {
     }
 }
 
+enum ConversationInputForwardingPolicy {
+    static func realtimeChunks(
+        endpointMode: ConversationEndpointMode,
+        assistantIsActive: Bool,
+        supportsEchoCancelledInterruption: Bool,
+        capturedChunk: AudioChunk,
+        gatedChunks: [AudioChunk]
+    ) -> [AudioChunk] {
+        switch endpointMode {
+        case .providerVAD:
+            if !assistantIsActive {
+                return [capturedChunk]
+            }
+            return supportsEchoCancelledInterruption ? gatedChunks : []
+        case .clientGate:
+            return gatedChunks
+        }
+    }
+}
+
 @MainActor
 protocol ConversationAudioServicing: AnyObject {
     var onInputChunk: ((AudioChunk) -> Void)? { get set }
@@ -400,7 +516,13 @@ protocol ConversationAudioServicing: AnyObject {
     var isRunning: Bool { get }
     var hasConfirmedInterruption: Bool { get }
 
+    func configureInputForwarding(
+        endpointMode: ConversationEndpointMode,
+        allowsResponseInterruption: Bool
+    )
     func start() async throws
+    func completeUserTurnEndpoint()
+    func resetUserInput()
     func prepareForAssistantResponse()
     func finishAssistantPreparation(preserveActiveSpeech: Bool)
     func beginAssistantResponse()
@@ -412,6 +534,12 @@ protocol ConversationAudioServicing: AnyObject {
 
 extension ConversationAudioServicing {
     var hasConfirmedInterruption: Bool { false }
+    func configureInputForwarding(
+        endpointMode: ConversationEndpointMode,
+        allowsResponseInterruption: Bool
+    ) {}
+    func completeUserTurnEndpoint() {}
+    func resetUserInput() {}
     func prepareForAssistantResponse() {}
     func finishAssistantPreparation(preserveActiveSpeech: Bool) {}
 }
@@ -428,13 +556,13 @@ final class ConversationAudioService: ConversationAudioServicing {
         var errorDescription: String? {
             switch self {
             case .permissionDenied:
-                return "请先允许 Friday 使用麦克风。"
+                return "请先允许 Olli 使用麦克风。"
             case .unavailableInput:
                 return "没有找到可用于对话的麦克风。"
             case .unavailableOutput:
-                return "没有找到可用于播放 Friday 声音的设备。"
+                return "没有找到可用于播放 Olli 声音的设备。"
             case .engineStartFailed:
-                return "Friday 无法启动 Mac 音频设备，请稍后重试。"
+                return "Olli 无法启动 Mac 音频设备，请稍后重试。"
             case .configurationChanged:
                 return "音频设备发生变化，本次对话已安全结束，请重新开始。"
             }
@@ -474,6 +602,8 @@ final class ConversationAudioService: ConversationAudioServicing {
     private var expectsEngineToRun = false
     private var activeBackend = ActiveBackend.stopped
     private var inputGate = ConversationInputGate()
+    private var endpointMode: ConversationEndpointMode = .providerVAD
+    private var allowsResponseInterruption = false
     private var configurationObserver: NSObjectProtocol?
     private let clock = ContinuousClock()
     private let logger = Logger(subsystem: "com.example.Friday", category: "TalkAudio")
@@ -502,6 +632,19 @@ final class ConversationAudioService: ConversationAudioServicing {
 
     var hasConfirmedInterruption: Bool {
         inputGate.hasConfirmedInterruption
+    }
+
+    func configureInputForwarding(
+        endpointMode: ConversationEndpointMode,
+        allowsResponseInterruption: Bool
+    ) {
+        let didChange = self.endpointMode != endpointMode
+            || self.allowsResponseInterruption != allowsResponseInterruption
+        self.endpointMode = endpointMode
+        self.allowsResponseInterruption = allowsResponseInterruption
+        if didChange, isRunning {
+            inputGate.reset()
+        }
     }
 
     func start() async throws {
@@ -681,7 +824,16 @@ final class ConversationAudioService: ConversationAudioServicing {
         _ chunk: AudioChunk,
         levels: ConversationAudioLevels
     ) {
-        for realtimeChunk in inputGate.inputForRealtime(chunk) {
+        let gatedChunks = inputGate.inputForRealtime(chunk)
+        let realtimeChunks = ConversationInputForwardingPolicy.realtimeChunks(
+            endpointMode: endpointMode,
+            assistantIsActive: inputGate.isAssistantPlaying,
+            supportsEchoCancelledInterruption: activeBackend == .voiceProcessing
+                && allowsResponseInterruption,
+            capturedChunk: chunk,
+            gatedChunks: gatedChunks
+        )
+        for realtimeChunk in realtimeChunks {
             onInputChunk?(realtimeChunk)
         }
         for transition in inputGate.takeTransitions() {
@@ -691,10 +843,20 @@ final class ConversationAudioService: ConversationAudioServicing {
     }
 
     func prepareForAssistantResponse() {
-        // Response creation has started, but playback may still be hundreds of
-        // milliseconds away. Require the same sustained near-field evidence in
-        // this gap so a short sound cannot cancel a response before it arrives.
-        inputGate.beginAssistantPlayback(allowsInterruption: true)
+        // Mark Assistant activity before the first playback frame. The AEC path
+        // can release locally confirmed speech with pre-roll; half-duplex stays
+        // muted because it has no reliable echo reference.
+        inputGate.beginAssistantPlayback(
+            allowsInterruption: allowsResponseInterruption
+        )
+    }
+
+    func completeUserTurnEndpoint() {
+        inputGate.completeUserTurnEndpoint()
+    }
+
+    func resetUserInput() {
+        inputGate.reset()
     }
 
     func finishAssistantPreparation(preserveActiveSpeech: Bool) {
@@ -719,7 +881,9 @@ final class ConversationAudioService: ConversationAudioServicing {
             // Tighten the microphone gate before the first speaker frame. This
             // closes the network/audio race where echo could otherwise create
             // a speech-start event just as Friday begins replying.
-            inputGate.beginAssistantPlayback(allowsInterruption: true)
+            inputGate.beginAssistantPlayback(
+                allowsInterruption: allowsResponseInterruption
+            )
             activeVoicePlaybackGeneration = voiceProcessingIO?.beginResponse()
         } else {
             activeVoicePlaybackGeneration = nil

@@ -35,19 +35,19 @@ enum ConversationExpression: String, Equatable, CaseIterable {
     var accessibilityLabel: String {
         switch self {
         case .awake:
-            return "Friday 已被唤醒"
+            return "Olli 已被唤醒"
         case .attentive:
-            return "Friday 正在听"
+            return "Olli 正在听"
         case .observing:
-            return "Friday 正在查看你选择的屏幕区域"
+            return "Olli 正在查看你选择的屏幕区域"
         case .speaking:
-            return "Friday 正在说话"
+            return "Olli 正在说话"
         case .interrupted:
-            return "Friday 已停止说话并继续听"
+            return "Olli 已停止说话并继续听"
         case .uncertain:
-            return "Friday 没有听清"
+            return "Olli 没有听清"
         case .resting:
-            return "Friday 正在结束对话"
+            return "Olli 正在结束对话"
         }
     }
 }

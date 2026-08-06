@@ -1,5 +1,5 @@
 // 功能：编排 Talk 从快捷键或可选唤醒入口到双向语音交流、图片上下文、诊断和结束清理的完整用户流程。
-// 职责：协调可替换 Talk Runtime、Action/Work Bridge、Presentation 与屏幕上下文，管理连接缓冲、轮次身份、端点、插话和错误恢复。
+// 职责：协调可替换 Talk Runtime、Action/Work Bridge、Presentation 与屏幕上下文，管理连接缓冲、轮次身份、工具交接、受抑制 Response、Provider/client 端点所有权、播放安全输入与错误恢复。
 // 边界：不直接实现 WebSocket、AVAudioEngine、屏幕截图或窗口绘制，也不持有长期 API Key，不把用户音频或对话文本写入诊断。
 
 import Foundation
@@ -26,6 +26,7 @@ final class ConversationCoordinator: ObservableObject {
     @Published private(set) var wakeWordState: WakeWordListeningState = .stopped
     @Published var sessionSnapshot = ConversationSessionSnapshot.idle
     @Published var latestWork: WorkRecord?
+    @Published var liveTranscript = ConversationLiveTranscriptSnapshot.empty
 
     var turnCount: Int {
         sessionSnapshot.completedResponses
@@ -88,10 +89,17 @@ final class ConversationCoordinator: ObservableObject {
     var pendingResponseTurnID: ConversationTurnID?
     private var expressionTask: Task<Void, Never>?
     private var screenCaptureTask: Task<Void, Never>?
+    private var endpointRecoveryTask: Task<Void, Never>?
     var workDeliveryTask: Task<Void, Never>?
     var toolCallTasks: [ConversationToolCallID: Task<Void, Never>] = [:]
     var handledToolCallIDs: Set<ConversationToolCallID> = []
+    var pendingToolCallIDsByResponseID: [
+        ConversationProviderResponseID: Set<ConversationToolCallID>
+    ] = [:]
     var suppressedPlaybackSpeechItemIDs: Set<ConversationProviderItemID> = []
+    var pendingSuppressedResponseRejections: [ConversationProviderItemID: Date] = [:]
+    var suppressedProviderResponseIDs: Set<ConversationProviderResponseID> = []
+    var recordedTranscriptionItemIDs: Set<ConversationProviderItemID> = []
     var pendingCompletedWorks: [WorkRecord] = []
     var presentingWork: WorkRecord?
     var isProviderResponseOutstanding = false
@@ -100,15 +108,19 @@ final class ConversationCoordinator: ObservableObject {
     private var pendingInputFrameCount = 0
     private var pendingScreenInputChunks: [AudioChunk] = []
     private var pendingScreenInputFrameCount = 0
+    private var pendingScreenInputGateTransitions: [ConversationInputGateTransition] = []
     var isProviderConnected = false
     var diagnosticTimeline = ConversationTurnDiagnosticTimeline()
+    var liveTranscriptTracker = ConversationLiveTranscriptTracker()
     var providerSpeechDurationMillisecondsByTurn: [ConversationTurnID: Int] = [:]
     private var openingSpeech = RetainedAudio()
     private var hasDetectedUserSpeech = false
+    private var hasLocallyConfirmedOpeningSpeech = false
     private var hasRequestedOpeningGreeting = false
     private var isScreenContextAttached = false
     let logger = Logger(subsystem: "com.example.Friday", category: "TalkMetrics")
     private static let maximumPendingInputFrames = 24_000 * 5
+    static let suppressedResponseRejectionWindow: TimeInterval = 2
 
     convenience init(
         activationMode: ConversationActivationMode,
@@ -201,12 +213,17 @@ final class ConversationCoordinator: ObservableObject {
         workDeliveryTask?.cancel()
         toolCallTasks.values.forEach { $0.cancel() }
         toolCallTasks.removeAll(keepingCapacity: false)
+        pendingToolCallIDsByResponseID.removeAll(keepingCapacity: false)
         suppressedPlaybackSpeechItemIDs.removeAll(keepingCapacity: false)
+        pendingSuppressedResponseRejections.removeAll(keepingCapacity: false)
+        suppressedProviderResponseIDs.removeAll(keepingCapacity: false)
+        recordedTranscriptionItemIDs.removeAll(keepingCapacity: false)
         screenSelectionController.cancelSelection()
         wakeWordProvider.stop()
         conversationRuntime.stop()
         sessionSnapshot = sessionLedger.endSession()
         turnCorrelator.endSession()
+        resetLiveTranscript()
         workBridge.endConversationSession()
         actionBridge.endConversationSession()
         presentation.hide()
@@ -244,7 +261,7 @@ final class ConversationCoordinator: ObservableObject {
             if granted {
                 resumeWakeMonitoring()
             } else {
-                state = .unavailable("需要语音识别权限才能使用 Hey Friday")
+                state = .unavailable("需要语音识别权限才能使用 Hey Olli")
             }
         }
     }
@@ -275,6 +292,10 @@ final class ConversationCoordinator: ObservableObject {
         idleTimeoutTask?.cancel()
         openingGreetingTask?.cancel()
         cancelScheduledUserResponse(reason: "screen_selection")
+        pendingScreenInputChunks.removeAll(keepingCapacity: true)
+        pendingScreenInputFrameCount = 0
+        pendingScreenInputGateTransitions.removeAll(keepingCapacity: true)
+        audioService.resetUserInput()
         if turnCorrelator.activePlaybackID != nil {
             let interruptedTurn = turnCorrelator.activeTurn
             let playedMilliseconds = audioService.stopAssistantPlayback()
@@ -373,18 +394,43 @@ final class ConversationCoordinator: ObservableObject {
             presentation.updateWaveform(levels, source: .microphone)
         }
         audioService.onInputGateTransition = { [weak self] transition in
-            guard let self, isConversationActive else { return }
+            guard let self, isConversationActive, endpointRecoveryTask == nil else { return }
             switch transition {
             case .candidateStarted(let interruption):
                 recordDiagnostic(
                     "input_gate.candidate_started",
                     attributes: ["interruption": String(interruption)]
                 )
+            case .candidateReset(let snapshot):
+                recordDiagnostic(
+                    "input_gate.candidate_reset",
+                    attributes: [
+                        "reason": snapshot.reason.rawValue,
+                        "interruption": String(snapshot.interruption),
+                        "voiced_ms": String(snapshot.voicedMilliseconds),
+                        "window_ms": String(snapshot.windowMilliseconds),
+                        "gap_ms": String(snapshot.gapMilliseconds),
+                        "threshold": String(format: "%.3f", snapshot.activationThreshold),
+                        "peak": String(format: "%.3f", snapshot.peakLevel)
+                    ]
+                )
             case .speechConfirmed(let interruption):
                 recordDiagnostic(
                     "input_gate.speech_confirmed",
                     attributes: ["interruption": String(interruption)]
                 )
+                if !interruption {
+                    suppressOpeningGreetingForLocalSpeechIfNeeded()
+                }
+                if conversationProvider.endpointMode == .clientGate {
+                    if bufferScreenInputGateTransitionIfNeeded(transition) {
+                        return
+                    }
+                    handleUserSpeechStarted(
+                        providerItemID: nil,
+                        endpointSource: "client_gate"
+                    )
+                }
             case .speechReleased(let reason):
                 recordDiagnostic(
                     "input_gate.speech_released",
@@ -395,6 +441,15 @@ final class ConversationCoordinator: ObservableObject {
                         )
                     ]
                 )
+                if conversationProvider.endpointMode == .clientGate {
+                    if bufferScreenInputGateTransitionIfNeeded(transition) {
+                        return
+                    }
+                    handleUserSpeechStopped(
+                        providerItemID: nil,
+                        endpointSource: "client_gate"
+                    )
+                }
             case .endpointSilenceExhausted:
                 recordDiagnostic(
                     "input_gate.endpoint_silence_exhausted",
@@ -404,12 +459,13 @@ final class ConversationCoordinator: ObservableObject {
                         )
                     ]
                 )
+                guard conversationProvider.endpointMode == .clientGate else { return }
+                if state == .selectingScreenRegion || state == .capturingScreenRegion {
+                    recordDiagnostic("screen_context.endpoint_silence_deferred")
+                    return
+                }
                 guard state == .listening || state == .userSpeaking else { return }
-                finishConversation(
-                    reason: .providerFailure,
-                    showToast: "这次语音没有正常结束，请再试一次",
-                    resumeWakeWord: true
-                )
+                recoverFromEndpointFailure()
             }
         }
         audioService.onOutputLevels = { [weak self] levels in
@@ -421,6 +477,11 @@ final class ConversationCoordinator: ObservableObject {
                   isConversationActive,
                   state == .assistantSpeaking || state == .assistantPreparing else { return }
             let completedTurn = turnCorrelator.finishActivePlayback(interrupted: false)
+            let hasPendingToolHandoff = completedTurn?.providerResponseID.map {
+                self.pendingToolCallIDsByResponseID[$0]?.isEmpty == false
+            } ?? false
+            let isAwaitingAssistantHandoff = isProviderResponseOutstanding
+                || hasPendingToolHandoff
             let playbackAttributes = completedTurn.map {
                 self.diagnosticTimeline.recordPlaybackFinished(turnID: $0.turnID)
             } ?? [:]
@@ -428,11 +489,20 @@ final class ConversationCoordinator: ObservableObject {
                 "audio.playback_finished",
                 turn: completedTurn,
                 attributes: playbackAttributes.merging(
-                    ["interrupted": "false"],
+                    [
+                        "interrupted": "false",
+                        "awaiting_assistant_handoff": String(isAwaitingAssistantHandoff),
+                        "pending_tool_handoff": String(hasPendingToolHandoff)
+                    ],
                     uniquingKeysWith: { _, new in new }
                 )
             )
             presentingWork = nil
+            if isAwaitingAssistantHandoff {
+                state = .assistantPreparing
+                presentation.show(expression: .awake, source: .assistant)
+                return
+            }
             state = .listening
             presentation.show(expression: .awake, source: .idle)
             scheduleIdleTimeout()
@@ -468,7 +538,7 @@ final class ConversationCoordinator: ObservableObject {
             } catch {
                 guard !Task.isCancelled else { return }
                 let message = (error as? LocalizedError)?.errorDescription
-                    ?? "Hey Friday 暂时不可用"
+                    ?? "Hey Olli 暂时不可用"
                 state = .unavailable(message)
             }
         }
@@ -488,6 +558,7 @@ final class ConversationCoordinator: ObservableObject {
         userResponseRequestTask = nil
         expressionTask?.cancel()
         screenCaptureTask?.cancel()
+        resetLiveTranscript()
         sessionSnapshot = sessionLedger.beginSession()
         responseLoopGuard.reset()
         if let sessionID = sessionSnapshot.id {
@@ -508,6 +579,7 @@ final class ConversationCoordinator: ObservableObject {
         pendingInputFrameCount = 0
         pendingScreenInputChunks.removeAll(keepingCapacity: true)
         pendingScreenInputFrameCount = 0
+        pendingScreenInputGateTransitions.removeAll(keepingCapacity: true)
         isScreenContextAttached = false
         isProviderConnected = false
         diagnosticTimeline.reset()
@@ -516,9 +588,14 @@ final class ConversationCoordinator: ObservableObject {
         uncorrelatedCancelledResponseCount = 0
         openingSpeech.removeAll()
         hasDetectedUserSpeech = false
+        hasLocallyConfirmedOpeningSpeech = false
         hasRequestedOpeningGreeting = false
         handledToolCallIDs.removeAll(keepingCapacity: true)
+        pendingToolCallIDsByResponseID.removeAll(keepingCapacity: true)
         suppressedPlaybackSpeechItemIDs.removeAll(keepingCapacity: true)
+        pendingSuppressedResponseRejections.removeAll(keepingCapacity: true)
+        suppressedProviderResponseIDs.removeAll(keepingCapacity: true)
+        recordedTranscriptionItemIDs.removeAll(keepingCapacity: true)
         isProviderResponseOutstanding = false
         state = .connecting
         recordDiagnostic(
@@ -526,7 +603,8 @@ final class ConversationCoordinator: ObservableObject {
             attributes: [
                 "runtime": conversationRuntime.descriptor.kind.rawValue,
                 "audio_owner": conversationRuntime.descriptor.audioOwner.rawValue,
-                "recording": conversationRuntime.descriptor.recordingPolicy.rawValue
+                "recording": conversationRuntime.descriptor.recordingPolicy.rawValue,
+                "endpoint_mode": conversationProvider.endpointMode.rawValue
             ]
         )
         recordDiagnostic(
@@ -543,9 +621,11 @@ final class ConversationCoordinator: ObservableObject {
                 try Task.checkCancellation()
                 isProviderConnected = true
                 flushPendingInput()
-                state = .listening
-                presentation.show(expression: .attentive, source: .microphone)
-                scheduleIdleTimeout()
+                if state == .connecting {
+                    state = .listening
+                    presentation.show(expression: .attentive, source: .microphone)
+                    scheduleIdleTimeout()
+                }
             } catch {
                 guard !Task.isCancelled else { return }
                 let notice = userFacingMessage(for: error)
@@ -564,8 +644,8 @@ final class ConversationCoordinator: ObservableObject {
 
     private func handleInputChunk(_ chunk: AudioChunk) {
         guard isConversationActive else { return }
-        guard state != .selectingScreenRegion else { return }
-        if state == .capturingScreenRegion {
+        guard endpointRecoveryTask == nil else { return }
+        if state == .selectingScreenRegion || state == .capturingScreenRegion {
             pendingScreenInputChunks.append(chunk)
             pendingScreenInputFrameCount += chunk.frameCount
             while pendingScreenInputFrameCount > Self.maximumPendingInputFrames,
@@ -574,7 +654,9 @@ final class ConversationCoordinator: ObservableObject {
             }
             return
         }
-        if !hasDetectedUserSpeech, !hasRequestedOpeningGreeting {
+        if conversationProvider.endpointMode == .clientGate,
+           !hasDetectedUserSpeech,
+           !hasRequestedOpeningGreeting {
             openingSpeech.append(chunk)
             if openingSpeech.hasLikelySpeech {
                 markUserSpeechDetected()
@@ -592,11 +674,13 @@ final class ConversationCoordinator: ObservableObject {
             }
             return
         }
+        recordLiveTranscriptAudioForwarded()
         conversationProvider.append(chunk)
     }
 
     private func flushPendingInput() {
         for chunk in pendingInputChunks {
+            recordLiveTranscriptAudioForwarded()
             conversationProvider.append(chunk)
         }
         pendingInputChunks.removeAll(keepingCapacity: true)
@@ -606,6 +690,7 @@ final class ConversationCoordinator: ObservableObject {
     func scheduleUserResponse(
         for turn: ConversationTurnCorrelationSnapshot
     ) {
+        guard conversationProvider.endpointMode == .clientGate else { return }
         userResponseRequestTask?.cancel()
         pendingResponseTurnID = turn.turnID
         recordDiagnostic(
@@ -619,6 +704,13 @@ final class ConversationCoordinator: ObservableObject {
         userResponseRequestTask = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(for: userTurnResponseGrace)
+            while !Task.isCancelled,
+                  isConversationActive,
+                  !isProviderConnected,
+                  pendingResponseTurnID == turn.turnID,
+                  state == .assistantPreparing {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
             guard !Task.isCancelled,
                   isConversationActive,
                   isProviderConnected,
@@ -637,6 +729,9 @@ final class ConversationCoordinator: ObservableObject {
                 attributes: requestAttributes
             )
             isProviderResponseOutstanding = true
+            if conversationProvider.endpointMode == .clientGate {
+                audioService.completeUserTurnEndpoint()
+            }
             audioService.prepareForAssistantResponse()
             do {
                 try await conversationProvider.requestUserResponse()
@@ -673,6 +768,49 @@ final class ConversationCoordinator: ObservableObject {
             attributes: ["reason": reason]
         )
         return cancelledTurn
+    }
+
+    private func recoverFromEndpointFailure() {
+        guard conversationProvider.endpointMode == .clientGate else { return }
+        guard endpointRecoveryTask == nil else { return }
+        _ = cancelScheduledUserResponse(reason: "endpoint_recovery")
+        if let turn = turnCorrelator.activeTurn,
+           turn.responseState == .awaitingResponse {
+            _ = turnCorrelator.cancelAwaitingResponse(for: turn.turnID)
+        }
+        state = .assistantPreparing
+        presentation.show(expression: .awake, source: .assistant)
+        recordDiagnostic(
+            "input_gate.endpoint_recovery_started",
+            turn: turnCorrelator.activeTurn,
+            attributes: ["endpoint_mode": conversationProvider.endpointMode.rawValue]
+        )
+        endpointRecoveryTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await conversationProvider.clearPendingUserAudio()
+                guard !Task.isCancelled, isConversationActive else { return }
+                endpointRecoveryTask = nil
+                audioService.resetUserInput()
+                state = .listening
+                presentation.show(expression: .attentive, source: .microphone)
+                presentation.showToast("刚才没听清，请再说一次", hidesOverlay: false)
+                recordDiagnostic("input_gate.endpoint_recovered")
+                scheduleIdleTimeout()
+            } catch {
+                endpointRecoveryTask = nil
+                let notice = userFacingMessage(for: error)
+                recordDiagnostic(
+                    "input_gate.endpoint_recovery_failed",
+                    attributes: ["notice": notice]
+                )
+                finishConversation(
+                    reason: .providerFailure,
+                    showToast: notice,
+                    resumeWakeWord: true
+                )
+            }
+        }
     }
 
     private static func milliseconds(_ duration: Duration) -> Int {
@@ -721,6 +859,7 @@ final class ConversationCoordinator: ObservableObject {
             let greetingTurn = turnCorrelator.beginOpeningGreeting()
             recordDiagnostic("opening_greeting.requested", turn: greetingTurn)
             isProviderResponseOutstanding = true
+            audioService.prepareForAssistantResponse()
             conversationProvider.requestOpeningGreeting()
         }
     }
@@ -735,6 +874,33 @@ final class ConversationCoordinator: ObservableObject {
         userResponseRequestTask?.cancel()
         userResponseRequestTask = nil
         pendingResponseTurnID = nil
+    }
+
+    private func suppressOpeningGreetingForLocalSpeechIfNeeded() {
+        guard !hasLocallyConfirmedOpeningSpeech,
+              !hasDetectedUserSpeech else { return }
+        let activeOpeningGreeting = turnCorrelator.activeTurn?.source == .openingGreeting
+            && isProviderResponseOutstanding
+        guard state == .connecting || state == .listening || activeOpeningGreeting else {
+            return
+        }
+
+        hasLocallyConfirmedOpeningSpeech = true
+        markUserSpeechDetected()
+        recordDiagnostic(
+            "opening_greeting.suppressed_by_local_speech",
+            attributes: ["response_started": String(activeOpeningGreeting)]
+        )
+
+        guard activeOpeningGreeting else { return }
+        if turnCorrelator.activeTurn?.providerResponseID == nil {
+            uncorrelatedCancelledResponseCount += 1
+        }
+        conversationProvider.cancelAssistantResponse()
+        audioService.finishAssistantPreparation(preserveActiveSpeech: true)
+        isProviderResponseOutstanding = false
+        state = isProviderConnected ? .listening : .connecting
+        presentation.show(expression: .attentive, source: .microphone)
     }
 
     func scheduleAttentiveExpression() {
@@ -779,10 +945,13 @@ final class ConversationCoordinator: ObservableObject {
         expressionTask = nil
         screenCaptureTask?.cancel()
         screenCaptureTask = nil
+        endpointRecoveryTask?.cancel()
+        endpointRecoveryTask = nil
         workDeliveryTask?.cancel()
         workDeliveryTask = nil
         toolCallTasks.values.forEach { $0.cancel() }
         toolCallTasks.removeAll(keepingCapacity: false)
+        pendingToolCallIDsByResponseID.removeAll(keepingCapacity: false)
         if let presentingWork {
             pendingCompletedWorks.insert(presentingWork, at: 0)
             self.presentingWork = nil
@@ -792,6 +961,7 @@ final class ConversationCoordinator: ObservableObject {
         conversationRuntime.stop()
         sessionSnapshot = sessionLedger.endSession()
         turnCorrelator.endSession()
+        resetLiveTranscript()
         workBridge.endConversationSession()
         actionBridge.endConversationSession()
         isProviderConnected = false
@@ -799,11 +969,16 @@ final class ConversationCoordinator: ObservableObject {
         pendingInputFrameCount = 0
         pendingScreenInputChunks.removeAll(keepingCapacity: false)
         pendingScreenInputFrameCount = 0
+        pendingScreenInputGateTransitions.removeAll(keepingCapacity: false)
         suppressedPlaybackSpeechItemIDs.removeAll(keepingCapacity: false)
+        pendingSuppressedResponseRejections.removeAll(keepingCapacity: false)
+        suppressedProviderResponseIDs.removeAll(keepingCapacity: false)
+        recordedTranscriptionItemIDs.removeAll(keepingCapacity: false)
         isScreenContextAttached = false
         diagnosticTimeline.reset()
         openingSpeech.removeAll()
         hasDetectedUserSpeech = false
+        hasLocallyConfirmedOpeningSpeech = false
         hasRequestedOpeningGreeting = false
         isProviderResponseOutstanding = false
         uncorrelatedCancelledResponseCount = 0
@@ -863,7 +1038,7 @@ final class ConversationCoordinator: ObservableObject {
                 screenCaptureTask = nil
                 resumeConversationAfterScreenSelection()
                 let message = (error as? LocalizedError)?.errorDescription
-                    ?? "Friday 暂时无法读取所选区域。"
+                    ?? "Olli 暂时无法读取所选区域。"
                 presentation.showToast(
                     message,
                     hidesOverlay: false
@@ -887,9 +1062,50 @@ final class ConversationCoordinator: ObservableObject {
                 conversationProvider.append(chunk)
             }
         }
+        let bufferedTransitions = flushCapturedAudio
+            ? pendingScreenInputGateTransitions
+            : []
         pendingScreenInputChunks.removeAll(keepingCapacity: true)
         pendingScreenInputFrameCount = 0
-        scheduleIdleTimeout()
+        pendingScreenInputGateTransitions.removeAll(keepingCapacity: true)
+        if flushCapturedAudio,
+           conversationProvider.endpointMode == .clientGate {
+            for transition in bufferedTransitions {
+                switch transition {
+                case .speechConfirmed:
+                    handleUserSpeechStarted(
+                        providerItemID: nil,
+                        endpointSource: "client_gate_screen_buffer"
+                    )
+                case .speechReleased:
+                    handleUserSpeechStopped(
+                        providerItemID: nil,
+                        endpointSource: "client_gate_screen_buffer"
+                    )
+                case .candidateStarted, .candidateReset, .endpointSilenceExhausted:
+                    break
+                }
+            }
+        } else {
+            audioService.resetUserInput()
+        }
+        if state == .listening {
+            scheduleIdleTimeout()
+        }
+    }
+
+    private func bufferScreenInputGateTransitionIfNeeded(
+        _ transition: ConversationInputGateTransition
+    ) -> Bool {
+        guard state == .selectingScreenRegion || state == .capturingScreenRegion else {
+            return false
+        }
+        pendingScreenInputGateTransitions.append(transition)
+        recordDiagnostic(
+            "screen_context.input_gate_buffered",
+            attributes: ["transition": transition.diagnosticName]
+        )
+        return true
     }
 
 }

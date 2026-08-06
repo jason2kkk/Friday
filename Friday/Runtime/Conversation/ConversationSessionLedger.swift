@@ -1,5 +1,5 @@
 // 功能：为每轮 Talk 建立稳定会话身份、无内容用量账本和响应循环保护。
-// 职责：维护会话快照、拒绝迟到用量，并区分正常用户回合与没有新用户输入的自主响应风暴。
+// 职责：累计 Realtime 响应和独立 Live Transcribe 估算费用、拒绝迟到用量，并区分正常用户回合与没有新用户输入的自主响应风暴。
 // 边界：不记录用户内容、不跨重启持久化，也不直接控制 Provider、音频、诊断文件或界面。
 
 import Foundation
@@ -35,6 +35,12 @@ struct ConversationSessionSnapshot: Equatable, Sendable {
 struct ConversationUsageUpdate: Equatable, Sendable {
     let didRecord: Bool
     let responseCostUSD: Double
+    let snapshot: ConversationSessionSnapshot
+}
+
+struct ConversationTranscriptionUsageUpdate: Equatable, Sendable {
+    let didRecord: Bool
+    let costUSD: Double
     let snapshot: ConversationSessionSnapshot
 }
 
@@ -74,6 +80,33 @@ struct ConversationSessionLedger {
         return ConversationUsageUpdate(
             didRecord: true,
             responseCostUSD: responseCost,
+            snapshot: snapshot
+        )
+    }
+
+    @discardableResult
+    mutating func recordTranscription(
+        _ usage: UserTurnTranscriptionUsage
+    ) -> ConversationTranscriptionUsageUpdate {
+        guard snapshot.isActive,
+              let cost = LiveTranscriptionPricing.estimatedCostUSD(for: usage) else {
+            return ConversationTranscriptionUsageUpdate(
+                didRecord: false,
+                costUSD: 0,
+                snapshot: snapshot
+            )
+        }
+
+        snapshot = ConversationSessionSnapshot(
+            id: snapshot.id,
+            isActive: true,
+            completedResponses: snapshot.completedResponses,
+            totalTokens: snapshot.totalTokens,
+            estimatedCostUSD: snapshot.estimatedCostUSD + cost
+        )
+        return ConversationTranscriptionUsageUpdate(
+            didRecord: true,
+            costUSD: cost,
             snapshot: snapshot
         )
     }

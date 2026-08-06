@@ -686,13 +686,13 @@ final class DictationProviderTests: XCTestCase {
         XCTAssertEqual(InputOverlayAtmosphereLayout.centerClearFraction, 0.64)
     }
 
-    func testWakePhraseMatcherRequiresCompleteHeyFridayPhrase() {
-        XCTAssertTrue(WakePhraseMatcher.matches("Hey Friday"))
-        XCTAssertTrue(WakePhraseMatcher.matches("Could you wake up, hey, Friday?"))
-        XCTAssertTrue(WakePhraseMatcher.matches("HEY FRIDAY, are you there?"))
-        XCTAssertFalse(WakePhraseMatcher.matches("Friday"))
+    func testWakePhraseMatcherRequiresCompleteHeyOlliPhrase() {
+        XCTAssertTrue(WakePhraseMatcher.matches("Hey Olli"))
+        XCTAssertTrue(WakePhraseMatcher.matches("Could you wake up, hey, Olli?"))
+        XCTAssertTrue(WakePhraseMatcher.matches("HEY OLLI, are you there?"))
+        XCTAssertFalse(WakePhraseMatcher.matches("Olli"))
         XCTAssertFalse(WakePhraseMatcher.matches("Hey there"))
-        XCTAssertFalse(WakePhraseMatcher.matches("Friday, hey"))
+        XCTAssertFalse(WakePhraseMatcher.matches("Olli, hey"))
     }
 
     func testConversationEventParserTracksSpeechAudioAndUsage() {
@@ -1426,7 +1426,7 @@ final class DictationProviderTests: XCTestCase {
         coordinator.stop()
     }
 
-    func testTalkCancelsOpeningGreetingAfterLocalSpeech() async throws {
+    func testTalkCancelsOpeningGreetingOnlyAfterProviderSpeechStarts() async throws {
         let recorder = ConversationLifecycleRecorder()
         let audioService = TestConversationAudioService(recorder: recorder)
         let provider = TestConversationProvider(recorder: recorder)
@@ -1442,6 +1442,11 @@ final class DictationProviderTests: XCTestCase {
         coordinator.startConversationFromShortcut()
         await waitUntil { coordinator.state == .listening }
         audioService.emitInput(level: 0.32, frameCount: 2_400)
+        provider.emit(
+            .userSpeechStarted(
+                itemID: ConversationProviderItemID("provider_confirmed_opening_speech")
+            )
+        )
         try await Task.sleep(for: .milliseconds(50))
 
         XCTAssertEqual(provider.openingGreetingRequestCount, 0)
@@ -1519,7 +1524,9 @@ final class DictationProviderTests: XCTestCase {
         provider.emit(.assistantAudio(identity: firstIdentity, data: Data([0, 1])))
         XCTAssertEqual(audioService.enqueuedAssistantAudioCount, 1)
 
-        audioService.hasConfirmedInterruption = true
+        provider.emit(.assistantAudioFinished(firstIdentity))
+        provider.emit(.responseCompleted(responseID: firstResponseID, usage: .zero))
+        audioService.onPlaybackFinished?()
         provider.emit(
             .userSpeechStarted(
                 itemID: ConversationProviderItemID("user_2")
@@ -1535,7 +1542,10 @@ final class DictationProviderTests: XCTestCase {
     func testTalkIgnoresOldCancellationWhileCurrentResponseIsPlaying() async throws {
         let recorder = ConversationLifecycleRecorder()
         let audioService = TestConversationAudioService(recorder: recorder)
-        let provider = TestConversationProvider(recorder: recorder)
+        let provider = TestConversationProvider(
+            recorder: recorder,
+            allowsResponseInterruption: true
+        )
         let coordinator = ConversationCoordinator(
             activationMode: .shortcut,
             wakeWordProvider: MockWakeWordService(),
@@ -1590,7 +1600,10 @@ final class DictationProviderTests: XCTestCase {
         let action = recognizer.handleFlagsChanged([])
         XCTAssertEqual(action, .dictation)
         XCTAssertTrue(recognizer.suppressesCurrentFlagsEvent)
+        XCTAssertTrue(recognizer.shouldConsumeFunctionKeyEvent)
+        XCTAssertTrue(recognizer.consumeFunctionKeyUpIfNeeded())
         XCTAssertFalse(recognizer.shouldConsumeFunctionKeyEvent)
+        XCTAssertFalse(recognizer.consumeFunctionKeyUpIfNeeded())
     }
 
     func testVoiceAgentChordSupportsBothModifierOrders() {
@@ -1622,6 +1635,8 @@ final class DictationProviderTests: XCTestCase {
         XCTAssertNil(recognizer.handleFlagsChanged([.function]))
         recognizer.handleKeyDown(modifierFlags: [.function])
         XCTAssertNil(recognizer.handleFlagsChanged([]))
+        XCTAssertFalse(recognizer.shouldConsumeFunctionKeyEvent)
+        XCTAssertFalse(recognizer.consumeFunctionKeyUpIfNeeded())
 
         XCTAssertNil(recognizer.handleFlagsChanged([.control]))
         XCTAssertNil(recognizer.handleFlagsChanged([.control, .option]))
@@ -1711,7 +1726,7 @@ final class DictationProviderTests: XCTestCase {
 
     func testNoticeUsesTheExpandedIslandInsteadOfASeparateToast() {
         let model = InputOverlayModel()
-        model.phase = .notice("没有找到可用于播放 Friday 声音的设备。")
+        model.phase = .notice("没有找到可用于播放 Olli 声音的设备。")
         model.isDashboardExpanded = true
 
         XCTAssertEqual(model.currentSize, InputOverlaySizing.expandedSize)
@@ -1924,6 +1939,7 @@ private final class TestConversationAudioService: ConversationAudioServicing {
 @MainActor
 private final class TestConversationProvider: ConversationProviding {
     var onEvent: ((ConversationEvent) -> Void)?
+    let allowsResponseInterruption: Bool
     private(set) var isConnected = false
     private(set) var appendedChunkCount = 0
     private(set) var openingGreetingRequestCount = 0
@@ -1933,8 +1949,12 @@ private final class TestConversationProvider: ConversationProviding {
 
     private let recorder: ConversationLifecycleRecorder
 
-    init(recorder: ConversationLifecycleRecorder) {
+    init(
+        recorder: ConversationLifecycleRecorder,
+        allowsResponseInterruption: Bool = false
+    ) {
         self.recorder = recorder
+        self.allowsResponseInterruption = allowsResponseInterruption
     }
 
     func connect() async throws {

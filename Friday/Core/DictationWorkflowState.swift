@@ -41,7 +41,7 @@ enum DictationWorkflowState: Equatable {
     var statusText: String {
         switch self {
         case .checkingReadiness:
-            return "正在检查 Friday"
+            return "正在检查 Olli"
         case .unavailable(let message), .recoverableFailure(let message):
             return message
         case .ready:

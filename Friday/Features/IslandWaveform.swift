@@ -93,7 +93,7 @@ struct ConversationWaveformView: View {
                 waveformLevels: waveformLevels,
                 isVoiceActive: isVoiceActive,
                 color: .pink,
-                accessibilityLabel: "Friday 正在说话"
+                accessibilityLabel: "Olli 正在说话"
             )
         }
     }
@@ -116,7 +116,7 @@ private struct IdleConversationWaveform: View {
                 }
             }
         }
-        .accessibilityLabel("Friday 正在等待")
+        .accessibilityLabel("Olli 正在等待")
     }
 }
 

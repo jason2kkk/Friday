@@ -2,13 +2,14 @@
 
 ## 项目背景
 
-Friday 是一个原生 macOS AI 助手，当前项目位于 `Friday.xcodeproj`，最低部署目标为 macOS 14.0。产品优先验证“自然语言输入 → 口语整理 → 写回当前输入框”，之后再扩展屏幕理解和 Agent。
+Friday/Olli 是一个原生 macOS 通用 Agent，当前项目位于 `Friday.xcodeproj`，最低部署目标为 macOS 14.0。产品目标是“自然语言目标 → 理解当前电脑状态 → 规划并选择能力 → 跨应用执行 → 重新观察和验证 → 交付结果”。Dictate 和 Talk 是低延迟入口与快速路径，不是必须全部完成后才开始 Agent 的串行阶段。
 
-产品路线、用户故事和阶段门槛见 `docs/产品路线图.md`；人机协作方式见 `docs/工程协作规范.md`。每次跨阶段开发前先读取这两个文件。
+当前产品与实施主线见 `docs/通用Agent路线.md`；已实现事实、用户故事和历史阶段见 `docs/产品路线图.md`；人机协作方式见 `docs/工程协作规范.md`。每次跨阶段开发前先读取这些文件。
 
 ## 每次开始前先看
 
 - `README.md`
+- `docs/通用Agent路线.md`
 - `docs/产品路线图.md`
 - `docs/工程协作规范.md`
 - `docs/编程Agent规范.md`
@@ -47,12 +48,13 @@ Friday 是一个原生 macOS AI 助手，当前项目位于 `Friday.xcodeproj`�
 
 ## 产品优先级
 
-1. 通用输入框注入：当前焦点、Accessibility、剪贴板后备、撤销。
-2. 实时语音改写：Mock 与真实 Provider 解耦、临时凭证、成本控制。
-3. 按需屏幕上下文：用户主动触发、可见提示、无持续监控。
-4. 受控 Agent：工具调用、风险等级、预览、确认、取消和恢复。
+1. 收口可构建基线，保留 Dictate、Talk、框选和现有本地 Action 的已验证行为。
+2. 验证通用 Computer Use Runtime：应用/窗口观察、AX 与截图、点击、输入、滚动、快捷键和动作后验证。
+3. 打通单一 Planner 的 Observe → Plan → Act → Verify 垂直闭环，先用文本测试台验证，再接入语音。
+4. 扩展文件/受限 Shell、浏览器 DOM/CDP 和跨应用能力。
+5. 接入 Conversation 与异步 Work，并实现外部副作用确认、持久化、上下文和记忆。
 
-不要在前一层还不稳定时跳到后一层；不要为了演示而绕过权限和确认边界。
+不要继续为单个应用增加别名、焦点或输入框特例来冒充通用 Agent。新 Agent PR 必须完成一个可验收的垂直任务；新工具必须进入 Capability Registry、声明风险、返回 ActionReceipt，并有动作后验证策略。Dictate 不经过重型 Agent，Talk 不拥有后台执行循环；不要为了演示绕过权限和确认边界。
 
 ## 架构边界
 

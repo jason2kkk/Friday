@@ -1,9 +1,41 @@
-// 功能：通过 OpenAI Realtime WebSocket 实现可持续、可打断并支持用户选区图片上下文的 Talk 会话。
-// 职责：从本地服务获取短期凭证，维护 WebSocket 生命周期，发送 PCM16 与图片事件，并解析语音、回复身份、用量、错误和截断事件。
+// 功能：通过 OpenAI Realtime WebSocket 实现由 Provider 或客户端端点驱动、并支持用户选区图片上下文的 Talk 会话。
+// 职责：从本地服务获取短期凭证，分别验证 Provider 自动取消与客户端受控插话声明，等待 Realtime 会话真实就绪，维护 WebSocket 生命周期，串行发送 PCM16；仅在 client-gate 回退中 commit 并请求回复，同时解析语音、工具、用量和错误事件。
 // 边界：不持有长期 API Key、不直接操作 AVAudioEngine 或屏幕捕获，也不决定灵动岛展示和产品级会话状态。
 
 import Foundation
 import OSLog
+
+enum RealtimeInputCommand {
+    case audio(Data)
+    case commitAndRequest(UUID)
+    case clear(UUID)
+
+    var completionID: UUID? {
+        switch self {
+        case .audio:
+            return nil
+        case .commitAndRequest(let id), .clear(let id):
+            return id
+        }
+    }
+
+    var payloads: [[String: Any]] {
+        switch self {
+        case .audio(let packet):
+            return [[
+                "type": "input_audio_buffer.append",
+                "audio": packet.base64EncodedString()
+            ]]
+        case .commitAndRequest:
+            return [
+                ["type": "input_audio_buffer.commit"],
+                ["type": "response.create"]
+            ]
+        case .clear:
+            return [["type": "input_audio_buffer.clear"]]
+        }
+    }
+}
 
 @MainActor
 final class RealtimeConversationProvider: ConversationProviding {
@@ -25,18 +57,20 @@ final class RealtimeConversationProvider: ConversationProviding {
             case .invalidCredentialResponse:
                 return "语音服务返回了无效的 Talk 凭证。"
             case .sessionAlreadyActive:
-                return "上一段 Friday 对话仍在进行。"
+                return "上一段 Olli 对话仍在进行。"
             case .screenContextRejected:
-                return "Friday 暂时无法读取所选区域。"
+                return "Olli 暂时无法读取所选区域。"
             case .transport:
-                return "Friday 语音连接已中断。"
+                return "Olli 语音连接已中断。"
             case .service:
-                return "Friday 语音服务暂时不可用。"
+                return "Olli 语音服务暂时不可用。"
             }
         }
     }
 
     var onEvent: ((ConversationEvent) -> Void)?
+    private(set) var endpointMode: ConversationEndpointMode = .providerVAD
+    private(set) var allowsResponseInterruption = false
 
     private static let packetByteCount = 4_800
     private let credentialEndpoint: URL?
@@ -45,9 +79,15 @@ final class RealtimeConversationProvider: ConversationProviding {
 
     private var webSocket: URLSessionWebSocketTask?
     private var audioBuffer = Data()
-    private var audioContinuation: AsyncStream<Data>.Continuation?
+    private var audioContinuation: AsyncStream<RealtimeInputCommand>.Continuation?
     private var audioSenderTask: Task<Void, Never>?
+    private var pendingInputCommandContinuations: [
+        UUID: CheckedContinuation<Void, Error>
+    ] = [:]
     private var receiverTask: Task<Void, Never>?
+    private var sessionReadyContinuation: CheckedContinuation<Void, Error>?
+    private var sessionReadyTimeoutTask: Task<Void, Never>?
+    private var didReceiveSessionReady = false
     private var isDisconnecting = false
     private var activeScreenContextItemID: String?
     private var pendingScreenContextConfirmations: [
@@ -69,6 +109,19 @@ final class RealtimeConversationProvider: ConversationProviding {
         guard let credentialEndpoint else { throw ConversationError.invalidCredentialEndpoint }
 
         let credential = try await fetchCredential(from: credentialEndpoint)
+        guard let endpointMode = ConversationEndpointMode(
+            rawValue: credential.endpointing ?? ""
+        ) else {
+            throw ConversationError.invalidCredentialResponse
+        }
+        if endpointMode == .providerVAD,
+           (credential.interruptResponse == nil
+                || credential.allowsResponseInterruption == nil) {
+            throw ConversationError.invalidCredentialResponse
+        }
+        self.endpointMode = endpointMode
+        allowsResponseInterruption = credential.allowsResponseInterruption
+            ?? (endpointMode == .clientGate)
         try Task.checkCancellation()
         guard var components = URLComponents(string: credential.realtimeURL) else {
             throw ConversationError.invalidCredentialResponse
@@ -91,6 +144,7 @@ final class RealtimeConversationProvider: ConversationProviding {
         webSocket = socket
         audioBuffer.removeAll(keepingCapacity: true)
         activeScreenContextItemID = nil
+        didReceiveSessionReady = false
         socket.resume()
         if Task.isCancelled {
             socket.cancel(with: .goingAway, reason: nil)
@@ -99,6 +153,8 @@ final class RealtimeConversationProvider: ConversationProviding {
         }
         startAudioSender(for: socket)
         startReceiver(for: socket)
+        try await waitForSessionReady()
+        try Task.checkCancellation()
         logger.info("Realtime Talk session started for model \(credential.model, privacy: .public)")
     }
 
@@ -111,7 +167,7 @@ final class RealtimeConversationProvider: ConversationProviding {
         while audioBuffer.count >= Self.packetByteCount {
             let packet = Data(audioBuffer.prefix(Self.packetByteCount))
             audioBuffer.removeFirst(Self.packetByteCount)
-            audioContinuation?.yield(packet)
+            audioContinuation?.yield(.audio(packet))
         }
     }
 
@@ -182,10 +238,23 @@ final class RealtimeConversationProvider: ConversationProviding {
     }
 
     func requestUserResponse() async throws {
-        guard let socket = webSocket else {
+        guard webSocket != nil else {
             throw ConversationError.transport("Talk session is not connected.")
         }
-        try await sendJSON(["type": "response.create"], over: socket)
+        guard endpointMode == .clientGate else { return }
+        if !audioBuffer.isEmpty {
+            audioContinuation?.yield(.audio(audioBuffer))
+            audioBuffer.removeAll(keepingCapacity: true)
+        }
+        try await enqueueInputCommand(.commitAndRequest(UUID()))
+    }
+
+    func clearPendingUserAudio() async throws {
+        guard webSocket != nil else {
+            throw ConversationError.transport("Talk session is not connected.")
+        }
+        audioBuffer.removeAll(keepingCapacity: true)
+        try await enqueueInputCommand(.clear(UUID()))
     }
 
     func discardUserAudioItem(_ itemID: ConversationProviderItemID) {
@@ -215,15 +284,14 @@ final class RealtimeConversationProvider: ConversationProviding {
                         "type": "response.create",
                         "response": [
                             "instructions": ConversationPrompt.openingGreeting,
-                            "output_modalities": ["audio"],
-                            "max_output_tokens": ConversationLimits.openingGreetingMaximumTokens
+                            "output_modalities": ["audio"]
                         ]
                     ],
                     over: socket
                 )
             } catch {
                 guard self?.isDisconnecting == false else { return }
-                self?.onEvent?(.failed("Friday 暂时无法开始这次问候。"))
+                self?.onEvent?(.failed("Olli 暂时无法开始这次问候。"))
             }
         }
     }
@@ -254,8 +322,7 @@ final class RealtimeConversationProvider: ConversationProviding {
                 "response": [
                     "instructions": ConversationPrompt.toolFollowUp,
                     "output_modalities": ["audio"],
-                    "tool_choice": "none",
-                    "max_output_tokens": ConversationLimits.toolFollowUpMaximumTokens
+                    "tool_choice": "none"
                 ]
             ],
             over: socket
@@ -273,8 +340,7 @@ final class RealtimeConversationProvider: ConversationProviding {
                 "response": [
                     "instructions": ConversationPrompt.completedWork(boundedResult),
                     "output_modalities": ["audio"],
-                    "tool_choice": "none",
-                    "max_output_tokens": ConversationLimits.workResultMaximumTokens
+                    "tool_choice": "none"
                 ]
             ],
             over: socket
@@ -313,12 +379,18 @@ final class RealtimeConversationProvider: ConversationProviding {
 
     func disconnect() {
         isDisconnecting = true
+        completeSessionReadiness(
+            error: ConversationError.transport(
+                "Talk session ended before Realtime became ready."
+            )
+        )
+        didReceiveSessionReady = false
         failPendingScreenContextConfirmations(
             ConversationError.transport("Talk session ended before screen context was confirmed.")
         )
-        if !audioBuffer.isEmpty {
-            audioContinuation?.yield(audioBuffer)
-        }
+        failPendingInputCommands(
+            ConversationError.transport("Talk session ended before input was finalized.")
+        )
         audioBuffer.removeAll(keepingCapacity: false)
         audioContinuation?.finish()
         audioContinuation = nil
@@ -365,26 +437,74 @@ final class RealtimeConversationProvider: ConversationProviding {
     }
 
     private func startAudioSender(for socket: URLSessionWebSocketTask) {
-        var continuation: AsyncStream<Data>.Continuation?
-        let stream = AsyncStream<Data> { continuation = $0 }
+        var continuation: AsyncStream<RealtimeInputCommand>.Continuation?
+        let stream = AsyncStream<RealtimeInputCommand> { continuation = $0 }
         audioContinuation = continuation
         audioSenderTask = Task { [weak self] in
-            do {
-                for await packet in stream {
-                    guard !Task.isCancelled else { return }
-                    try await self?.sendJSON(
-                        [
-                            "type": "input_audio_buffer.append",
-                            "audio": packet.base64EncodedString()
-                        ],
-                        over: socket
-                    )
+            for await command in stream {
+                guard !Task.isCancelled else { return }
+                do {
+                    for payload in command.payloads {
+                        try await self?.sendJSON(
+                            payload,
+                            over: socket
+                        )
+                    }
+                    if let completionID = command.completionID {
+                        self?.completeInputCommand(completionID, error: nil)
+                    }
+                } catch {
+                    if let completionID = command.completionID {
+                        self?.completeInputCommand(completionID, error: error)
+                    }
+                    self?.failPendingInputCommands(error)
+                    guard self?.isDisconnecting == false else { return }
+                    self?.onEvent?(.failed("Olli 无法继续发送麦克风音频。"))
+                    return
                 }
-            } catch {
-                guard self?.isDisconnecting == false else { return }
-                self?.onEvent?(.failed("Friday 无法继续发送麦克风音频。"))
             }
         }
+    }
+
+    private func enqueueInputCommand(_ command: RealtimeInputCommand) async throws {
+        guard let audioContinuation else {
+            throw ConversationError.transport("Talk audio sender is not available.")
+        }
+        guard let completionID = command.completionID else { return }
+        try await withCheckedThrowingContinuation { continuation in
+            pendingInputCommandContinuations[completionID] = continuation
+            switch audioContinuation.yield(command) {
+            case .enqueued:
+                break
+            case .dropped, .terminated:
+                completeInputCommand(
+                    completionID,
+                    error: ConversationError.transport("Talk audio sender stopped.")
+                )
+            @unknown default:
+                completeInputCommand(
+                    completionID,
+                    error: ConversationError.transport("Talk audio sender stopped.")
+                )
+            }
+        }
+    }
+
+    private func completeInputCommand(_ id: UUID, error: Error?) {
+        guard let continuation = pendingInputCommandContinuations.removeValue(
+            forKey: id
+        ) else { return }
+        if let error {
+            continuation.resume(throwing: error)
+        } else {
+            continuation.resume()
+        }
+    }
+
+    private func failPendingInputCommands(_ error: Error) {
+        let pending = pendingInputCommandContinuations
+        pendingInputCommandContinuations.removeAll(keepingCapacity: false)
+        pending.values.forEach { $0.resume(throwing: error) }
     }
 
     private func startReceiver(for socket: URLSessionWebSocketTask) {
@@ -411,14 +531,53 @@ final class RealtimeConversationProvider: ConversationProviding {
                         continue
                     }
                     for event in parser.consume(object) {
+                        if event == .sessionReady {
+                            completeSessionReadiness(error: nil)
+                        }
                         onEvent?(event)
                     }
                 } catch {
                     guard !Task.isCancelled, !isDisconnecting else { return }
-                    onEvent?(.failed("Friday 语音连接已中断。"))
+                    let wasAwaitingReadiness = sessionReadyContinuation != nil
+                    completeSessionReadiness(error: error)
+                    if !wasAwaitingReadiness {
+                        onEvent?(.failed("Olli 语音连接已中断。"))
+                    }
                     return
                 }
             }
+        }
+    }
+
+    private func waitForSessionReady() async throws {
+        if didReceiveSessionReady { return }
+        try await withCheckedThrowingContinuation { continuation in
+            sessionReadyContinuation = continuation
+            sessionReadyTimeoutTask?.cancel()
+            sessionReadyTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled else { return }
+                self?.completeSessionReadiness(
+                    error: ConversationError.transport(
+                        "Timed out waiting for the Realtime session."
+                    )
+                )
+            }
+        }
+    }
+
+    private func completeSessionReadiness(error: Error?) {
+        if error == nil {
+            didReceiveSessionReady = true
+        }
+        sessionReadyTimeoutTask?.cancel()
+        sessionReadyTimeoutTask = nil
+        guard let continuation = sessionReadyContinuation else { return }
+        sessionReadyContinuation = nil
+        if let error {
+            continuation.resume(throwing: error)
+        } else {
+            continuation.resume()
         }
     }
 
@@ -510,6 +669,23 @@ struct ConversationEventParser {
             return [
                 .userSpeechStopped(
                     itemID: ConversationProviderItemID(event["item_id"] as? String)
+                )
+            ]
+        case "input_audio_buffer.committed":
+            guard let itemID = ConversationProviderItemID(
+                event["item_id"] as? String
+            ) else { return [] }
+            return [.userAudioCommitted(itemID: itemID)]
+        case "conversation.item.input_audio_transcription.delta":
+            guard let itemID = ConversationProviderItemID(event["item_id"] as? String),
+                  let delta = event["delta"] as? String,
+                  !delta.isEmpty else { return [] }
+            return [
+                .userTranscriptionDelta(
+                    ConversationInputTranscriptionDelta(
+                        itemID: itemID,
+                        delta: delta
+                    )
                 )
             ]
         case "conversation.item.input_audio_transcription.completed":
@@ -606,7 +782,7 @@ struct ConversationEventParser {
                 let responseError = details?["error"] as? [String: Any]
                 let message = responseError?["message"] as? String
                     ?? reason
-                    ?? "Friday 没有完成这次回复。"
+                    ?? "Olli 没有完成这次回复。"
                 if Self.isCancellationWithoutActiveResponse(
                     code: responseError?["code"] as? String,
                     message: message
@@ -629,7 +805,7 @@ struct ConversationEventParser {
             let error = event["error"] as? [String: Any]
             let code = error?["code"] as? String
             let message = error?["message"] as? String
-                ?? "Friday 语音服务返回错误。"
+                ?? "Olli 语音服务返回错误。"
             if Self.isCancellationWithoutActiveResponse(
                 code: code,
                 message: message
@@ -740,12 +916,18 @@ private struct TalkClientCredential: Decodable {
     let model: String
     let realtimeURL: String
     let mode: String
+    let endpointing: String?
+    let interruptResponse: Bool?
+    let allowsResponseInterruption: Bool?
 
     enum CodingKeys: String, CodingKey {
         case value
         case model
         case realtimeURL = "realtime_url"
         case mode
+        case endpointing
+        case interruptResponse = "interrupt_response"
+        case allowsResponseInterruption = "allows_response_interruption"
     }
 }
 
