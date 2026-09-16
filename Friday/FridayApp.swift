@@ -1,16 +1,20 @@
-// 功能：启动 Friday macOS 应用，常驻顶部灵动岛，并承载应用级 Dictate 和 Talk 工作流。
-// 职责：创建 App 场景与服务依赖，统一管理权限和就绪状态、快捷键分发、录音处理、目标写回、失败恢复及 Talk 协调器。
+// 功能：启动带 Dock 入口的 Olli macOS 应用，展示独立主工作台与常驻顶部灵动岛，并承载应用级 Dictate 和 Talk 工作流。
+// 职责：管理关窗后继续运行、Dock 重开和灵动岛打开工作台的应用生命周期，并统一装配权限、快捷键、音频、写回、实时字幕、本地 Action 与 Talk 工作流。
 // 边界：不保存长期 API Key 或用户音频；系统访问、音频、网络和浮层细节分别委托给 Platform、Provider 与 Feature 类型。
 
 import AppKit
 import Combine
+import OSLog
 import SwiftUI
 
 @main
 struct FridayApp: App {
+    @NSApplicationDelegateAdaptor(FridayApplicationDelegate.self)
+    private var applicationDelegate
     @StateObject private var appState: AppState
 
     init() {
+        OlliBrandTypography.registerBundledFonts()
         let environment = ProcessInfo.processInfo.environment
         let isRunningTests = environment["XCTestConfigurationFilePath"] != nil
             || environment["XCTestBundlePath"] != nil
@@ -99,14 +103,31 @@ final class AppState: ObservableObject {
     }
 
     private let servicesEnabled: Bool
+    private let logger = Logger(subsystem: "com.example.Friday", category: "DictationWorkflow")
     private let healthClient: SessionServiceHealthChecking
+    private let interactionSoundPlayer: any InteractionSoundPlaying
     private let accessibilityService = AccessibilityInputService()
     private let hotKeyService = GlobalHotKeyService()
+    private let globeKeySystemActionService = GlobeKeySystemActionService()
     private let microphoneService = MicrophoneCaptureService()
     private let mockProvider: DictationProvider = MockDictationProvider()
     private let realtimeProvider: DictationProvider = RealtimeDictationProvider()
     private let overlayModel = InputOverlayModel()
+    private let transcriptOverlayModel = ConversationTranscriptOverlayModel()
     private var overlayController: InputOverlayController?
+    private var transcriptOverlayController: ConversationTranscriptOverlayController?
+    private var workspaceWindowController: AppWorkspaceWindowController?
+    private lazy var focusedInputActionExecutor = FocusedInputActionExecutor(
+        inputService: accessibilityService
+    )
+    private lazy var conversationActionBridge = ConversationActionBridge(
+        executor: focusedInputActionExecutor
+    )
+    private lazy var computerUseRuntime = NativeComputerUseRuntime()
+    private lazy var computerUseTaskRunner = TextEditSmokeTaskRunner(
+        runtime: computerUseRuntime
+    )
+    private let textEditSmokeTask = TextEditSmokeTask.makeDefault()
     private lazy var conversationCoordinator: ConversationCoordinator = {
         let conversationProvider: ConversationProviding
         switch ConversationMode.configured {
@@ -115,15 +136,20 @@ final class AppState: ObservableObject {
         case .live:
             conversationProvider = RealtimeConversationProvider()
         }
+        let conversationRuntime = DirectRealtimeConversationRuntimeSession(
+            conversationProvider: conversationProvider,
+            audioService: ConversationAudioService()
+        )
         return ConversationCoordinator(
             activationMode: .shortcut,
             wakeWordProvider: MockWakeWordService(),
-            conversationProvider: conversationProvider,
-            audioService: ConversationAudioService(),
+            conversationRuntime: conversationRuntime,
             presentation: InputOverlayConversationPresenter(
                 model: overlayModel,
                 controller: overlayController
-            )
+            ),
+            actionBridge: conversationActionBridge,
+            diagnostics: ConversationJSONLDiagnosticsRecorder()
         )
     }()
     private var activeProvider: DictationProvider?
@@ -136,23 +162,33 @@ final class AppState: ObservableObject {
     private var readinessTask: Task<Void, Never>?
     private var recordingLimitTask: Task<Void, Never>?
     private var feedbackTask: Task<Void, Never>?
+    private var conversationStartTask: Task<Void, Never>?
+    private var computerUseExecutionTask: Task<Void, Never>?
     private var activationObserver: NSObjectProtocol?
+    private var terminationObserver: NSObjectProtocol?
+    private var workspaceOpenObserver: NSObjectProtocol?
     private var conversationObservation: AnyCancellable?
     private var dashboardObservation: AnyCancellable?
     private let minimumRecordingDuration: TimeInterval = 0.35
     private let maximumDictationRecordingDuration: Duration = .seconds(600)
-    private let mockOutputText = "Friday 开发测试：本轮使用 Mock 处理，不会产生 API 费用。"
+    private let mockOutputText = "Olli 开发测试：本轮使用 Mock 处理，不会产生 API 费用。"
 
     init(
         servicesEnabled: Bool = true,
-        healthClient: SessionServiceHealthChecking = SessionServiceHealthClient()
+        healthClient: SessionServiceHealthChecking = SessionServiceHealthClient(),
+        interactionSoundPlayer: (any InteractionSoundPlaying)? = nil
     ) {
         self.servicesEnabled = servicesEnabled
         self.healthClient = healthClient
+        self.interactionSoundPlayer = interactionSoundPlayer ?? InteractionSoundService()
         dictationMode = DictationMode.configured
 
         if servicesEnabled {
             overlayController = InputOverlayController(model: overlayModel)
+            transcriptOverlayController = ConversationTranscriptOverlayController(
+                model: transcriptOverlayModel
+            )
+            workspaceWindowController = AppWorkspaceWindowController(model: overlayModel)
         }
 
         refreshPermissionStatus()
@@ -197,6 +233,16 @@ final class AppState: ObservableObject {
         overlayModel.onQuit = {
             NSApplication.shared.terminate(nil)
         }
+        overlayModel.onOpenWorkspace = { [weak self] in
+            self?.overlayModel.onCollapseDashboard?()
+            self?.workspaceWindowController?.show()
+        }
+        overlayModel.onRunComputerUseSmokeTask = { [weak self] in
+            self?.runTextEditSmokeTask()
+        }
+        overlayModel.onCancelComputerUseTask = { [weak self] in
+            self?.cancelComputerUseTask()
+        }
         microphoneService.onLevel = { [weak self] level in
             guard self?.workflowState.isRecording == true else { return }
             self?.overlayModel.audioLevel = level
@@ -230,6 +276,25 @@ final class AppState: ObservableObject {
                 self?.refreshReadiness()
             }
         }
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.cancelComputerUseTask()
+                self?.releaseGlobalHotKeys()
+            }
+        }
+        workspaceOpenObserver = NotificationCenter.default.addObserver(
+            forName: .fridayOpenWorkspace,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.workspaceWindowController?.show()
+            }
+        }
 
         guard servicesEnabled else {
             workflowState = .unavailable("预览状态")
@@ -251,11 +316,21 @@ final class AppState: ObservableObject {
         conversationCoordinator.start()
         refreshReadiness()
         syncIslandDashboard()
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            self?.workspaceWindowController?.show()
+        }
     }
 
     deinit {
         if let activationObserver {
             NotificationCenter.default.removeObserver(activationObserver)
+        }
+        if let terminationObserver {
+            NotificationCenter.default.removeObserver(terminationObserver)
+        }
+        if let workspaceOpenObserver {
+            NotificationCenter.default.removeObserver(workspaceOpenObserver)
         }
     }
 
@@ -298,7 +373,7 @@ final class AppState: ObservableObject {
             quotaLabel = "账户额度：服务不可用"
         }
 
-        overlayModel.dashboard = IslandDashboardSnapshot(
+        overlayModel.dashboard = AppDashboardSnapshot(
             status: status,
             model: modelName,
             serviceLabel: serviceLabel,
@@ -320,6 +395,28 @@ final class AppState: ObservableObject {
             isDictationActive: workflowState.isWorking,
             isConversationActive: isConversationActive
         )
+        transcriptOverlayController?.update(
+            isPresented: conversationCoordinator.isConversationActive,
+            transcript: conversationCoordinator.liveTranscript
+        )
+    }
+
+    private func runTextEditSmokeTask() {
+        guard computerUseExecutionTask == nil else { return }
+        overlayModel.computerUseTaskPath = textEditSmokeTask.outputURL.path
+        computerUseTaskRunner.onStateChange = { [weak self] state in
+            self?.overlayModel.computerUseTaskState = state
+        }
+        computerUseExecutionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = await computerUseTaskRunner.run(textEditSmokeTask)
+            computerUseExecutionTask = nil
+        }
+    }
+
+    private func cancelComputerUseTask() {
+        computerUseTaskRunner.cancel()
+        computerUseExecutionTask?.cancel()
     }
 
     private static func quotaLabel(for issueCode: String?) -> String {
@@ -423,14 +520,29 @@ final class AppState: ObservableObject {
     }
 
     private func registerHotKeysIfPossible() {
-        guard servicesEnabled, accessibilityGranted, !hotKeyAvailable else { return }
+        guard servicesEnabled else { return }
+        guard accessibilityGranted else {
+            releaseGlobalHotKeys()
+            return
+        }
         do {
-            try hotKeyService.register()
+            try globeKeySystemActionService.takeOver()
+            if !hotKeyAvailable {
+                try hotKeyService.register()
+            }
             hotKeyAvailable = true
         } catch {
+            hotKeyService.unregister()
+            globeKeySystemActionService.restoreBestEffort()
             hotKeyAvailable = false
             workflowState = .unavailable(error.localizedDescription)
         }
+    }
+
+    private func releaseGlobalHotKeys() {
+        hotKeyService.unregister()
+        hotKeyAvailable = false
+        globeKeySystemActionService.restoreBestEffort()
     }
 
     func requestMicrophonePermission() {
@@ -453,7 +565,7 @@ final class AppState: ObservableObject {
     }
 
     func openMicrophoneSettings() {
-        workflowState = .unavailable("请在系统设置中允许 Friday 使用麦克风")
+        workflowState = .unavailable("请在系统设置中允许 Olli 使用麦克风")
         openPrivacySettings(anchor: "Privacy_Microphone")
     }
 
@@ -531,6 +643,9 @@ final class AppState: ObservableObject {
     }
 
     private func handleHotKey() {
+        if conversationStartTask != nil {
+            cancelPendingConversationStart()
+        }
         if conversationCoordinator.isConversationActive {
             conversationCoordinator.endConversation()
             return
@@ -567,6 +682,10 @@ final class AppState: ObservableObject {
     }
 
     private func handleConversationHotKey() {
+        if conversationStartTask != nil {
+            cancelPendingConversationStart()
+            return
+        }
         if conversationCoordinator.isConversationActive {
             conversationCoordinator.endConversation()
             return
@@ -586,7 +705,34 @@ final class AppState: ObservableObject {
                 refreshAfterwards: false
             )
         case .ready, .success, .checkingReadiness, .unavailable:
-            conversationCoordinator.startConversationFromShortcut()
+            lockConversationActionTarget()
+            conversationStartTask = Task { [weak self] in
+                guard let self else { return }
+                await interactionSoundPlayer.playBeforeCapture(for: .talkCaptureRequested)
+                guard !Task.isCancelled else { return }
+                conversationStartTask = nil
+                conversationCoordinator.startConversationFromShortcut()
+            }
+        }
+    }
+
+    private func cancelPendingConversationStart() {
+        conversationStartTask?.cancel()
+        conversationStartTask = nil
+        interactionSoundPlayer.stop()
+        conversationActionBridge.lockSessionTarget(nil)
+    }
+
+    private func lockConversationActionTarget() {
+        let result = accessibilityService.captureDictationTarget(promptIfNeeded: false)
+        switch result {
+        case .target(let target):
+            conversationActionBridge.lockSessionTarget(target)
+        case .accessibilityDenied:
+            accessibilityGranted = false
+            conversationActionBridge.lockSessionTarget(nil)
+        case .secureInput, .fridayFocused, .noFocusedElement, .notEditable, .systemError:
+            conversationActionBridge.lockSessionTarget(nil)
         }
     }
 
@@ -635,7 +781,7 @@ final class AppState: ObservableObject {
         overlayModel.isVoiceActive = false
         overlayModel.waveformLevels = InputOverlayModel.silentWaveformLevels
         accessibilityGranted = accessibilityService.isTrusted
-        let targetResult = accessibilityService.captureFocusedTarget(promptIfNeeded: false)
+        let targetResult = accessibilityService.captureDictationTarget(promptIfNeeded: false)
         let fallbackApplicationName = accessibilityService.frontmostApplicationName
         let target: FocusedInputTarget?
         let targetRole: String
@@ -666,11 +812,16 @@ final class AppState: ObservableObject {
         lockedTarget = target
         activeContext = context
         lastTargetName = target?.applicationName ?? fallbackApplicationName
+        logger.info(
+            "Dictate target locked=\(target != nil, privacy: .public), application=\((target?.applicationName ?? fallbackApplicationName), privacy: .public), role=\((target?.role ?? targetRole), privacy: .public)"
+        )
         workflowState = .preparing
 
         workflowTask = Task { [weak self] in
             guard let self else { return }
             do {
+                await interactionSoundPlayer.playBeforeCapture(for: .dictateCaptureRequested)
+                try Task.checkCancellation()
                 try await microphoneService.start()
                 try Task.checkCancellation()
 
@@ -710,6 +861,7 @@ final class AppState: ObservableObject {
             return
         }
 
+        interactionSoundPlayer.play(for: .dictateProcessingStarted)
         startProviderPreparationIfNeeded()
         guard let preparationTask = providerPreparationTask else {
             provider.cancel()
@@ -752,6 +904,7 @@ final class AppState: ObservableObject {
         recordingLimitTask?.cancel()
         microphoneService.stop()
         activeProvider?.cancel()
+        interactionSoundPlayer.stop()
         clearActiveWorkflow(clearRetainedAudio: true)
         overlayController?.hide()
         workflowState = .success("已取消本次录音")
@@ -860,6 +1013,7 @@ final class AppState: ObservableObject {
             return
         }
 
+        interactionSoundPlayer.play(for: .dictateProcessingFailed)
         showRecoverableFailure(
             userFacingMessage(for: error),
             recovery: recovery
@@ -985,7 +1139,7 @@ final class AppState: ObservableObject {
         let insertionTarget: FocusedInputTarget?
         if let target {
             insertionTarget = target
-        } else if case .target(let currentTarget) = accessibilityService.captureFocusedTarget(
+        } else if case .target(let currentTarget) = accessibilityService.captureDictationTarget(
             promptIfNeeded: false
         ) {
             insertionTarget = currentTarget
@@ -995,6 +1149,7 @@ final class AppState: ObservableObject {
         }
 
         guard let insertionTarget else {
+            logger.error("Dictate completed without a safe insertion target")
             clearActiveWorkflow(clearRetainedAudio: true)
             workflowState = .success("转写完成，请复制文字")
             overlayController?.show(
@@ -1013,7 +1168,27 @@ final class AppState: ObservableObject {
         )
         let result = await accessibilityService.insert(output.finalText, into: insertionTarget)
         guard !Task.isCancelled else { return }
+        logger.info(
+            "Dictate insertion finished with result=\(Self.insertionResultLabel(result), privacy: .public), application=\(insertionTarget.applicationName, privacy: .public), role=\(insertionTarget.role, privacy: .public)"
+        )
         finishInsertion(result, outputText: output.finalText, target: insertionTarget)
+    }
+
+    private static func insertionResultLabel(_ result: TextInsertionResult) -> String {
+        switch result {
+        case .verified:
+            return "verified"
+        case .dispatched:
+            return "dispatched"
+        case .targetUnavailable:
+            return "target_unavailable"
+        case .focusChanged:
+            return "focus_changed"
+        case .pasteEventUnavailable:
+            return "paste_event_unavailable"
+        case .systemError:
+            return "system_error"
+        }
     }
 
     private func receiveAudioChunk(_ chunk: AudioChunk) {

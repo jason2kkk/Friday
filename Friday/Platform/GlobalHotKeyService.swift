@@ -24,10 +24,6 @@ enum GlobalHotKeyAction: Equatable {
     case dictation
     case conversation
     case screenRegion
-
-    var suppressesSystemReleaseEvent: Bool {
-        self == .dictation
-    }
 }
 
 struct ModifierChordRecognizer {
@@ -42,16 +38,41 @@ struct ModifierChordRecognizer {
     private var armedAction: GlobalHotKeyAction?
     private var pendingAction: GlobalHotKeyAction?
     private var isBlockedUntilRelease = false
+    private var isConsumingFunctionGesture = false
+    private var consumesTrailingFunctionKeyUp = false
+    private(set) var suppressesCurrentFlagsEvent = false
+
+    var shouldConsumeFunctionKeyEvent: Bool {
+        isConsumingFunctionGesture || consumesTrailingFunctionKeyUp
+    }
 
     mutating func handleFlagsChanged(
         _ flags: NSEvent.ModifierFlags
     ) -> GlobalHotKeyAction? {
         let current = flags.intersection(Self.relevantModifiers)
+        suppressesCurrentFlagsEvent = false
+
+        if current == [.function],
+           armedAction == nil,
+           pendingAction == nil,
+           !isBlockedUntilRelease {
+            consumesTrailingFunctionKeyUp = false
+            isConsumingFunctionGesture = true
+        }
+        if isConsumingFunctionGesture,
+           current == [.function] || current.isEmpty {
+            suppressesCurrentFlagsEvent = true
+        }
+
         guard !current.isEmpty else {
             let action = isBlockedUntilRelease ? nil : (pendingAction ?? armedAction)
+            let completedPureFunctionGesture = isConsumingFunctionGesture
+                && action == .dictation
             armedAction = nil
             pendingAction = nil
             isBlockedUntilRelease = false
+            isConsumingFunctionGesture = false
+            consumesTrailingFunctionKeyUp = completedPureFunctionGesture
             return action
         }
 
@@ -94,11 +115,27 @@ struct ModifierChordRecognizer {
     }
 
     mutating func handleKeyDown(modifierFlags: NSEvent.ModifierFlags) {
+        consumesTrailingFunctionKeyUp = false
         let current = modifierFlags.intersection(Self.relevantModifiers)
         guard armedAction != nil || !current.isEmpty else { return }
         armedAction = nil
         pendingAction = nil
         isBlockedUntilRelease = true
+    }
+
+    mutating func consumeFunctionKeyUpIfNeeded() -> Bool {
+        let shouldConsume = shouldConsumeFunctionKeyEvent
+        consumesTrailingFunctionKeyUp = false
+        return shouldConsume
+    }
+
+    mutating func reset() {
+        armedAction = nil
+        pendingAction = nil
+        isBlockedUntilRelease = false
+        isConsumingFunctionGesture = false
+        consumesTrailingFunctionKeyUp = false
+        suppressesCurrentFlagsEvent = false
     }
 
     private func modifiers(
@@ -143,6 +180,7 @@ final class GlobalHotKeyService {
         guard eventTap == nil else { return }
         let eventMask = (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
             | (CGEventMask(1) << CGEventType.keyDown.rawValue)
+            | (CGEventMask(1) << CGEventType.keyUp.rawValue)
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -166,14 +204,31 @@ final class GlobalHotKeyService {
         )
     }
 
+    func unregister() {
+        recognizer.reset()
+        if let eventTapSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
+        }
+        if let eventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            CFMachPortInvalidate(eventTap)
+        }
+        eventTapSource = nil
+        eventTap = nil
+    }
+
     fileprivate func handleEventTap(
         type: CGEventType,
         event: CGEvent
     ) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            recognizer.reset()
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
             }
+            logger.error(
+                "Global hot key event tap re-enabled after disable type=\(type.rawValue, privacy: .public)"
+            )
             return Unmanaged.passUnretained(event)
         }
 
@@ -181,11 +236,22 @@ final class GlobalHotKeyService {
             return Unmanaged.passUnretained(event)
         }
         let action: GlobalHotKeyAction?
+        var suppressEvent = false
         switch type {
         case .flagsChanged:
             action = recognizer.handleFlagsChanged(nsEvent.modifierFlags)
+            suppressEvent = recognizer.suppressesCurrentFlagsEvent
         case .keyDown:
-            recognizer.handleKeyDown(modifierFlags: nsEvent.modifierFlags)
+            if event.getIntegerValueField(.keyboardEventKeycode) == 63,
+               recognizer.shouldConsumeFunctionKeyEvent {
+                suppressEvent = true
+            } else {
+                recognizer.handleKeyDown(modifierFlags: nsEvent.modifierFlags)
+            }
+            action = nil
+        case .keyUp:
+            suppressEvent = event.getIntegerValueField(.keyboardEventKeycode) == 63
+                && recognizer.consumeFunctionKeyUpIfNeeded()
             action = nil
         default:
             action = nil
@@ -193,14 +259,22 @@ final class GlobalHotKeyService {
 
         if let action {
             logger.debug("Global modifier chord received")
-            onPressed?(action)
+            // Return from CGEventTap before microphone start/stop or UI work runs.
+            DispatchQueue.main.async { [weak self] in
+                self?.onPressed?(action)
+            }
         }
 
-        // macOS performs the configured Globe/Fn single-press action on release.
-        // Consume only the validated pure-Fn release; mixed shortcuts pass through.
-        return action?.suppressesSystemReleaseEvent == true
-            ? nil
-            : Unmanaged.passUnretained(event)
+        if suppressEvent || action == .dictation {
+            logger.info(
+                "Fn gesture event type=\(type.rawValue, privacy: .public) flags=\(nsEvent.modifierFlags.rawValue, privacy: .public) consumed=\(suppressEvent, privacy: .public) action=\(action == .dictation, privacy: .public)"
+            )
+        }
+
+        // macOS starts recognizing the configured Globe/Fn single-press action
+        // on press. Consume both boundaries of a pure-Fn candidate; events that
+        // include another modifier or regular key still pass through.
+        return suppressEvent ? nil : Unmanaged.passUnretained(event)
     }
 
     deinit {

@@ -44,15 +44,15 @@ final class ScreenRegionCaptureService: ScreenRegionCapturing {
         var errorDescription: String? {
             switch self {
             case .permissionDenied:
-                return "请先允许 Friday 录制屏幕。"
+                return "请先允许 Olli 录制屏幕。"
             case .displayUnavailable:
                 return "刚才选择的屏幕已不可用，请重新选择。"
             case .invalidSelection:
                 return "选择区域太小，请重新框选。"
             case .captureFailed:
-                return "Friday 暂时无法读取这个屏幕区域。"
+                return "Olli 暂时无法读取这个屏幕区域。"
             case .encodingFailed:
-                return "Friday 无法处理这张屏幕图片。"
+                return "Olli 无法处理这张屏幕图片。"
             }
         }
     }

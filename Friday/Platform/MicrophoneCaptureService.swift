@@ -59,7 +59,7 @@ final class MicrophoneCaptureService {
         var errorDescription: String? {
             switch self {
             case .permissionDenied:
-                return "请先允许 Friday 使用麦克风。"
+                return "请先允许 Olli 使用麦克风。"
             case .unavailableInput:
                 return "没有找到可用的麦克风。"
             }

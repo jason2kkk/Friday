@@ -1,6 +1,6 @@
-// 功能：读取 Friday 本地短期凭证服务、OpenAI 模型路由和本地用量监控的当前健康状态。
-// 职责：解码模型配置、代理状态、累计签发、重试保护和账单可见性，并把网络或响应错误转换为调用方可处理的结果。
-// 边界：只调用健康检查端点，不申请短期凭证、不创建 Realtime 会话，也不会产生模型 token。
+// 功能：确认 Friday 本地凭证服务及其 OpenAI 模型路由是否已经可以支持 Live 模式。
+// 职责：调用独立模型就绪端点，解码配置、累计签发、保护和账单状态，并输出可恢复错误。
+// 边界：不把本地进程存活当成模型就绪，不申请短期凭证、不创建 Realtime 会话，也不会产生模型 token。
 
 import Foundation
 
@@ -60,7 +60,7 @@ struct SessionServiceHealthClient: SessionServiceHealthChecking {
     private let urlSession: URLSession
 
     init(
-        endpoint: URL? = RealtimeConfiguration.healthEndpoint,
+        endpoint: URL? = RealtimeConfiguration.readinessEndpoint,
         urlSession: URLSession = .shared
     ) {
         self.endpoint = endpoint
@@ -71,7 +71,7 @@ struct SessionServiceHealthClient: SessionServiceHealthChecking {
         guard let endpoint else { throw HealthError.invalidEndpoint }
 
         var request = URLRequest(url: endpoint)
-        request.timeoutInterval = 3
+        request.timeoutInterval = 4
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         let (data, response) = try await urlSession.data(for: request)

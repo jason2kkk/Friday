@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -35,6 +35,45 @@
 		A10000000000000000000026 /* ConversationPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000029 /* ConversationPresentation.swift */; };
 		A10000000000000000000027 /* ConversationAudioLevels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000030 /* ConversationAudioLevels.swift */; };
 		A10000000000000000000028 /* ConversationWorkBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000031 /* ConversationWorkBridge.swift */; };
+		A10000000000000000000029 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000032 /* Assets.xcassets */; };
+		A10000000000000000000030 /* VoiceProcessingAudioUnit.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000033 /* VoiceProcessingAudioUnit.swift */; };
+		A10000000000000000000034 /* UserTurnTranscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000037 /* UserTurnTranscription.swift */; };
+		A10000000000000000000035 /* WorkDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000038 /* WorkDraft.swift */; };
+		A10000000000000000000036 /* ConversationDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000039 /* ConversationDiagnostics.swift */; };
+		A10000000000000000000037 /* ConversationCoordinatorDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000040 /* ConversationCoordinatorDiagnostics.swift */; };
+		A10000000000000000000038 /* ConversationCoordinatorEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000041 /* ConversationCoordinatorEvents.swift */; };
+		A10000000000000000000039 /* ConversationRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000042 /* ConversationRuntime.swift */; };
+		A10000000000000000000040 /* ActionProposal.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000043 /* ActionProposal.swift */; };
+		A10000000000000000000041 /* LiveKitConversationRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000044 /* LiveKitConversationRuntime.swift */; };
+		A10000000000000000000042 /* ConversationRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000045 /* ConversationRuntimeTests.swift */; };
+		A10000000000000000000043 /* ConversationLiveTranscript.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000046 /* ConversationLiveTranscript.swift */; };
+		B10000000000000000000001 /* ConversationActionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* ConversationActionBridge.swift */; };
+		B10000000000000000000002 /* RunningApplicationResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* RunningApplicationResolver.swift */; };
+		B10000000000000000000003 /* FocusedInputActionExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* FocusedInputActionExecutor.swift */; };
+		B10000000000000000000004 /* AgentActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* AgentActionTests.swift */; };
+		C10000000000000000000001 /* GlobeKeySystemActionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* GlobeKeySystemActionService.swift */; };
+		C10000000000000000000002 /* GlobeKeySystemActionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* GlobeKeySystemActionServiceTests.swift */; };
+		D10000000000000000000001 /* InteractionSoundService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000001 /* InteractionSoundService.swift */; };
+		D10000000000000000000002 /* InteractionSoundServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* InteractionSoundServiceTests.swift */; };
+		D10000000000000000000003 /* chime.wav in Resources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000003 /* chime.wav */; };
+		D10000000000000000000004 /* sparkle.wav in Resources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000004 /* sparkle.wav */; };
+		D10000000000000000000005 /* success.wav in Resources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000005 /* success.wav */; };
+		D10000000000000000000006 /* error.wav in Resources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000006 /* error.wav */; };
+		D10000000000000000000007 /* Cuelume-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000007 /* Cuelume-LICENSE.txt */; };
+		E10000000000000000000001 /* ConversationTranscriptOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000001 /* ConversationTranscriptOverlay.swift */; };
+		E10000000000000000000002 /* AppDashboardSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000002 /* AppDashboardSnapshot.swift */; };
+		E10000000000000000000003 /* WorkspaceSecondaryPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000003 /* WorkspaceSecondaryPages.swift */; };
+		F10000000000000000000001 /* Olli.icon in Resources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000001 /* Olli.icon */; };
+		G10000000000000000000001 /* AppDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = G20000000000000000000001 /* AppDashboardView.swift */; };
+		G10000000000000000000002 /* AppWorkspaceWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = G20000000000000000000002 /* AppWorkspaceWindowController.swift */; };
+		J10000000000000000000001 /* ComputerUseRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = J20000000000000000000001 /* ComputerUseRuntime.swift */; };
+		J10000000000000000000002 /* NativeComputerUseRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = J20000000000000000000002 /* NativeComputerUseRuntime.swift */; };
+		J10000000000000000000003 /* ComputerUseTaskView.swift in Sources */ = {isa = PBXBuildFile; fileRef = J20000000000000000000003 /* ComputerUseTaskView.swift */; };
+		J10000000000000000000004 /* ComputerUseRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = J20000000000000000000004 /* ComputerUseRuntimeTests.swift */; };
+		K10000000000000000000001 /* OlliBrandTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = K20000000000000000000001 /* OlliBrandTypography.swift */; };
+		K10000000000000000000002 /* Mali-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = K20000000000000000000002 /* Mali-Bold.ttf */; };
+		K10000000000000000000003 /* Mali-BoldItalic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = K20000000000000000000003 /* Mali-BoldItalic.ttf */; };
+		K10000000000000000000004 /* Mali-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = K20000000000000000000004 /* Mali-OFL.txt */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -79,6 +118,45 @@
 		A20000000000000000000029 /* ConversationPresentation.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationPresentation.swift; sourceTree = "<group>"; };
 		A20000000000000000000030 /* ConversationAudioLevels.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationAudioLevels.swift; sourceTree = "<group>"; };
 		A20000000000000000000031 /* ConversationWorkBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationWorkBridge.swift; sourceTree = "<group>"; };
+		A20000000000000000000032 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000000000000000000033 /* VoiceProcessingAudioUnit.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VoiceProcessingAudioUnit.swift; sourceTree = "<group>"; };
+		A20000000000000000000037 /* UserTurnTranscription.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = UserTurnTranscription.swift; sourceTree = "<group>"; };
+		A20000000000000000000038 /* WorkDraft.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WorkDraft.swift; sourceTree = "<group>"; };
+		A20000000000000000000039 /* ConversationDiagnostics.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationDiagnostics.swift; sourceTree = "<group>"; };
+		A20000000000000000000040 /* ConversationCoordinatorDiagnostics.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationCoordinatorDiagnostics.swift; sourceTree = "<group>"; };
+		A20000000000000000000041 /* ConversationCoordinatorEvents.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationCoordinatorEvents.swift; sourceTree = "<group>"; };
+		A20000000000000000000042 /* ConversationRuntime.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationRuntime.swift; sourceTree = "<group>"; };
+		A20000000000000000000043 /* ActionProposal.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ActionProposal.swift; sourceTree = "<group>"; };
+		A20000000000000000000044 /* LiveKitConversationRuntime.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LiveKitConversationRuntime.swift; sourceTree = "<group>"; };
+		A20000000000000000000045 /* ConversationRuntimeTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationRuntimeTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000046 /* ConversationLiveTranscript.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationLiveTranscript.swift; sourceTree = "<group>"; };
+		B20000000000000000000001 /* ConversationActionBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationActionBridge.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 /* RunningApplicationResolver.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RunningApplicationResolver.swift; sourceTree = "<group>"; };
+		B20000000000000000000003 /* FocusedInputActionExecutor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = FocusedInputActionExecutor.swift; sourceTree = "<group>"; };
+		B20000000000000000000004 /* AgentActionTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AgentActionTests.swift; sourceTree = "<group>"; };
+		C20000000000000000000001 /* GlobeKeySystemActionService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GlobeKeySystemActionService.swift; sourceTree = "<group>"; };
+		C20000000000000000000002 /* GlobeKeySystemActionServiceTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GlobeKeySystemActionServiceTests.swift; sourceTree = "<group>"; };
+		D20000000000000000000001 /* InteractionSoundService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = InteractionSoundService.swift; sourceTree = "<group>"; };
+		D20000000000000000000002 /* InteractionSoundServiceTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = InteractionSoundServiceTests.swift; sourceTree = "<group>"; };
+		D20000000000000000000003 /* chime.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = chime.wav; sourceTree = "<group>"; };
+		D20000000000000000000004 /* sparkle.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = sparkle.wav; sourceTree = "<group>"; };
+		D20000000000000000000005 /* success.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = success.wav; sourceTree = "<group>"; };
+		D20000000000000000000006 /* error.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = error.wav; sourceTree = "<group>"; };
+		D20000000000000000000007 /* Cuelume-LICENSE.txt */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = "Cuelume-LICENSE.txt"; sourceTree = "<group>"; };
+		E20000000000000000000001 /* ConversationTranscriptOverlay.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ConversationTranscriptOverlay.swift; sourceTree = "<group>"; };
+		E20000000000000000000002 /* AppDashboardSnapshot.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDashboardSnapshot.swift; sourceTree = "<group>"; };
+		E20000000000000000000003 /* WorkspaceSecondaryPages.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WorkspaceSecondaryPages.swift; sourceTree = "<group>"; };
+		F20000000000000000000001 /* Olli.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Olli.icon; sourceTree = "<group>"; };
+		G20000000000000000000001 /* AppDashboardView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDashboardView.swift; sourceTree = "<group>"; };
+		G20000000000000000000002 /* AppWorkspaceWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppWorkspaceWindowController.swift; sourceTree = "<group>"; };
+		J20000000000000000000001 /* ComputerUseRuntime.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ComputerUseRuntime.swift; sourceTree = "<group>"; };
+		J20000000000000000000002 /* NativeComputerUseRuntime.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NativeComputerUseRuntime.swift; sourceTree = "<group>"; };
+		J20000000000000000000003 /* ComputerUseTaskView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ComputerUseTaskView.swift; sourceTree = "<group>"; };
+		J20000000000000000000004 /* ComputerUseRuntimeTests.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ComputerUseRuntimeTests.swift; sourceTree = "<group>"; };
+		K20000000000000000000001 /* OlliBrandTypography.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OlliBrandTypography.swift; sourceTree = "<group>"; };
+		K20000000000000000000002 /* Mali-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Mali-Bold.ttf"; sourceTree = "<group>"; };
+		K20000000000000000000003 /* Mali-BoldItalic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Mali-BoldItalic.ttf"; sourceTree = "<group>"; };
+		K20000000000000000000004 /* Mali-OFL.txt */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = "Mali-OFL.txt"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -113,8 +191,14 @@
 			children = (
 				A20000000000000000000001 /* FridayApp.swift */,
 				A20000000000000000000002 /* ContentView.swift */,
+				G20000000000000000000001 /* AppDashboardView.swift */,
+				A20000000000000000000032 /* Assets.xcassets */,
+				H40000000000000000000001 /* App图标 */,
+				D40000000000000000000001 /* Resources */,
+				K40000000000000000000001 /* Shared */,
 				A40000000000000000000005 /* Core */,
 				A40000000000000000000008 /* Runtime */,
+				A40000000000000000000011 /* Providers */,
 				A40000000000000000000006 /* Features */,
 				A40000000000000000000004 /* Platform */,
 				A20000000000000000000004 /* Info.plist */,
@@ -134,11 +218,18 @@
 		A40000000000000000000004 /* Platform */ = {
 			isa = PBXGroup;
 			children = (
+				G20000000000000000000002 /* AppWorkspaceWindowController.swift */,
+				J20000000000000000000002 /* NativeComputerUseRuntime.swift */,
 				A20000000000000000000005 /* GlobalHotKeyService.swift */,
+				C20000000000000000000001 /* GlobeKeySystemActionService.swift */,
+				D20000000000000000000001 /* InteractionSoundService.swift */,
 				A20000000000000000000006 /* AccessibilityInputService.swift */,
+				B20000000000000000000002 /* RunningApplicationResolver.swift */,
+				B20000000000000000000003 /* FocusedInputActionExecutor.swift */,
 				A20000000000000000000007 /* MicrophoneCaptureService.swift */,
 				A20000000000000000000018 /* WakeWordService.swift */,
 				A20000000000000000000021 /* ConversationAudioService.swift */,
+				A20000000000000000000033 /* VoiceProcessingAudioUnit.swift */,
 				A20000000000000000000024 /* ScreenRegionCaptureService.swift */,
 			);
 			path = Platform;
@@ -161,9 +252,16 @@
 		A40000000000000000000006 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				E20000000000000000000002 /* AppDashboardSnapshot.swift */,
+				J20000000000000000000003 /* ComputerUseTaskView.swift */,
+				E20000000000000000000003 /* WorkspaceSecondaryPages.swift */,
 				A20000000000000000000009 /* InputOverlay.swift */,
 				A20000000000000000000016 /* InputOverlayAtmosphere.swift */,
 				A20000000000000000000022 /* ConversationCoordinator.swift */,
+				A20000000000000000000040 /* ConversationCoordinatorDiagnostics.swift */,
+				A20000000000000000000041 /* ConversationCoordinatorEvents.swift */,
+				A20000000000000000000046 /* ConversationLiveTranscript.swift */,
+				E20000000000000000000001 /* ConversationTranscriptOverlay.swift */,
 				A20000000000000000000029 /* ConversationPresentation.swift */,
 				A20000000000000000000023 /* IslandWaveform.swift */,
 				A20000000000000000000025 /* ScreenRegionSelection.swift */,
@@ -174,8 +272,13 @@
 		A40000000000000000000007 /* FridayTests */ = {
 			isa = PBXGroup;
 			children = (
+				J20000000000000000000004 /* ComputerUseRuntimeTests.swift */,
 				A20000000000000000000012 /* DictationProviderTests.swift */,
+				C20000000000000000000002 /* GlobeKeySystemActionServiceTests.swift */,
+				D20000000000000000000002 /* InteractionSoundServiceTests.swift */,
 				A20000000000000000000026 /* TalkInteractionTests.swift */,
+				A20000000000000000000045 /* ConversationRuntimeTests.swift */,
+				B20000000000000000000004 /* AgentActionTests.swift */,
 				A20000000000000000000017 /* DictationQualityCases.json */,
 			);
 			path = FridayTests;
@@ -184,8 +287,10 @@
 		A40000000000000000000008 /* Runtime */ = {
 			isa = PBXGroup;
 			children = (
+				J40000000000000000000001 /* ComputerUse */,
 				A40000000000000000000009 /* Conversation */,
 				A40000000000000000000010 /* Work */,
+				B40000000000000000000001 /* Action */,
 			);
 			path = Runtime;
 			sourceTree = "<group>";
@@ -194,8 +299,11 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000030 /* ConversationAudioLevels.swift */,
+				A20000000000000000000039 /* ConversationDiagnostics.swift */,
+				A20000000000000000000042 /* ConversationRuntime.swift */,
 				A20000000000000000000027 /* ConversationSessionLedger.swift */,
 				A20000000000000000000028 /* ConversationTurnCorrelator.swift */,
+				A20000000000000000000037 /* UserTurnTranscription.swift */,
 			);
 			path = Conversation;
 			sourceTree = "<group>";
@@ -204,8 +312,97 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000031 /* ConversationWorkBridge.swift */,
+				A20000000000000000000043 /* ActionProposal.swift */,
+				A20000000000000000000038 /* WorkDraft.swift */,
 			);
 			path = Work;
+			sourceTree = "<group>";
+		};
+		A40000000000000000000011 /* Providers */ = {
+			isa = PBXGroup;
+			children = (
+				A40000000000000000000012 /* LiveKit */,
+			);
+			path = Providers;
+			sourceTree = "<group>";
+		};
+		A40000000000000000000012 /* LiveKit */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000044 /* LiveKitConversationRuntime.swift */,
+			);
+			path = LiveKit;
+			sourceTree = "<group>";
+		};
+		B40000000000000000000001 /* Action */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000001 /* ConversationActionBridge.swift */,
+			);
+			path = Action;
+			sourceTree = "<group>";
+		};
+		J40000000000000000000001 /* ComputerUse */ = {
+			isa = PBXGroup;
+			children = (
+				J20000000000000000000001 /* ComputerUseRuntime.swift */,
+			);
+			path = ComputerUse;
+			sourceTree = "<group>";
+		};
+		K40000000000000000000001 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				K20000000000000000000001 /* OlliBrandTypography.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		D40000000000000000000001 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				K40000000000000000000002 /* Fonts */,
+				D40000000000000000000002 /* Sounds */,
+				D40000000000000000000003 /* ThirdPartyNotices */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		K40000000000000000000002 /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				K20000000000000000000002 /* Mali-Bold.ttf */,
+				K20000000000000000000003 /* Mali-BoldItalic.ttf */,
+			);
+			path = Fonts;
+			sourceTree = "<group>";
+		};
+		D40000000000000000000002 /* Sounds */ = {
+			isa = PBXGroup;
+			children = (
+				D20000000000000000000003 /* chime.wav */,
+				D20000000000000000000004 /* sparkle.wav */,
+				D20000000000000000000005 /* success.wav */,
+				D20000000000000000000006 /* error.wav */,
+			);
+			path = Sounds;
+			sourceTree = "<group>";
+		};
+		D40000000000000000000003 /* ThirdPartyNotices */ = {
+			isa = PBXGroup;
+			children = (
+				D20000000000000000000007 /* Cuelume-LICENSE.txt */,
+				K20000000000000000000004 /* Mali-OFL.txt */,
+			);
+			path = ThirdPartyNotices;
+			sourceTree = "<group>";
+		};
+		H40000000000000000000001 /* App图标 */ = {
+			isa = PBXGroup;
+			children = (
+				F20000000000000000000001 /* Olli.icon */,
+			);
+			path = "App图标";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -252,7 +449,8 @@
 		A70000000000000000000001 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
-				LastUpgradeCheck = 1600;
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					A50000000000000000000001 = {
 						CreatedOnToolsVersion = 16.0;
@@ -282,14 +480,49 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		A30000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000029 /* Assets.xcassets in Resources */,
+				F10000000000000000000001 /* Olli.icon in Resources */,
+				D10000000000000000000003 /* chime.wav in Resources */,
+				D10000000000000000000004 /* sparkle.wav in Resources */,
+				D10000000000000000000005 /* success.wav in Resources */,
+				D10000000000000000000006 /* error.wav in Resources */,
+				D10000000000000000000007 /* Cuelume-LICENSE.txt in Resources */,
+				K10000000000000000000002 /* Mali-Bold.ttf in Resources */,
+				K10000000000000000000003 /* Mali-BoldItalic.ttf in Resources */,
+				K10000000000000000000004 /* Mali-OFL.txt in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A30000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000014 /* DictationQualityCases.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		A30000000000000000000002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				J10000000000000000000001 /* ComputerUseRuntime.swift in Sources */,
+				J10000000000000000000002 /* NativeComputerUseRuntime.swift in Sources */,
+				J10000000000000000000003 /* ComputerUseTaskView.swift in Sources */,
 				A10000000000000000000001 /* FridayApp.swift in Sources */,
 				A10000000000000000000002 /* ContentView.swift in Sources */,
+				G10000000000000000000001 /* AppDashboardView.swift in Sources */,
+				G10000000000000000000002 /* AppWorkspaceWindowController.swift in Sources */,
 				A10000000000000000000003 /* GlobalHotKeyService.swift in Sources */,
+				C10000000000000000000001 /* GlobeKeySystemActionService.swift in Sources */,
+				D10000000000000000000001 /* InteractionSoundService.swift in Sources */,
 				A10000000000000000000004 /* AccessibilityInputService.swift in Sources */,
 				A10000000000000000000005 /* MicrophoneCaptureService.swift in Sources */,
 				A10000000000000000000006 /* DictationProvider.swift in Sources */,
@@ -312,6 +545,23 @@
 				A10000000000000000000026 /* ConversationPresentation.swift in Sources */,
 				A10000000000000000000027 /* ConversationAudioLevels.swift in Sources */,
 				A10000000000000000000028 /* ConversationWorkBridge.swift in Sources */,
+				A10000000000000000000030 /* VoiceProcessingAudioUnit.swift in Sources */,
+				A10000000000000000000034 /* UserTurnTranscription.swift in Sources */,
+				A10000000000000000000035 /* WorkDraft.swift in Sources */,
+				A10000000000000000000036 /* ConversationDiagnostics.swift in Sources */,
+				A10000000000000000000037 /* ConversationCoordinatorDiagnostics.swift in Sources */,
+				A10000000000000000000038 /* ConversationCoordinatorEvents.swift in Sources */,
+				A10000000000000000000043 /* ConversationLiveTranscript.swift in Sources */,
+				E10000000000000000000001 /* ConversationTranscriptOverlay.swift in Sources */,
+				E10000000000000000000002 /* AppDashboardSnapshot.swift in Sources */,
+				E10000000000000000000003 /* WorkspaceSecondaryPages.swift in Sources */,
+				A10000000000000000000039 /* ConversationRuntime.swift in Sources */,
+				A10000000000000000000040 /* ActionProposal.swift in Sources */,
+				A10000000000000000000041 /* LiveKitConversationRuntime.swift in Sources */,
+				B10000000000000000000001 /* ConversationActionBridge.swift in Sources */,
+				B10000000000000000000002 /* RunningApplicationResolver.swift in Sources */,
+				B10000000000000000000003 /* FocusedInputActionExecutor.swift in Sources */,
+				K10000000000000000000001 /* OlliBrandTypography.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -319,30 +569,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				J10000000000000000000004 /* ComputerUseRuntimeTests.swift in Sources */,
 				A10000000000000000000010 /* DictationProviderTests.swift in Sources */,
+				C10000000000000000000002 /* GlobeKeySystemActionServiceTests.swift in Sources */,
+				D10000000000000000000002 /* InteractionSoundServiceTests.swift in Sources */,
 				A10000000000000000000023 /* TalkInteractionTests.swift in Sources */,
+				A10000000000000000000042 /* ConversationRuntimeTests.swift in Sources */,
+				B10000000000000000000004 /* AgentActionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXResourcesBuildPhase section */
-		A30000000000000000000003 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		A30000000000000000000006 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A10000000000000000000014 /* DictationQualityCases.json in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
 		AA0000000000000000000001 /* PBXTargetDependency */ = {
@@ -357,16 +594,20 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = Olli;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 7WKP2RG3A9;
-				ENABLE_TESTABILITY = YES;
 				DEVELOPMENT_LANGUAGE = en;
+				DEVELOPMENT_TEAM = 7WKP2RG3A9;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Friday/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Olli;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.Friday;
@@ -380,13 +621,17 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = Olli;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_IDENTITY = "Developer ID Application";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_LANGUAGE = en;
+				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Friday/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Olli;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.Friday;
@@ -396,35 +641,96 @@
 			};
 			name = Release;
 		};
-		A80000000000000000000003 /* Project Debug */ = {
+		A80000000000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
 		};
-		A80000000000000000000004 /* Project Release */ = {
+		A80000000000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
 				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
 		};
-		A80000000000000000000005 /* FridayTests Debug */ = {
+		A80000000000000000000005 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 7WKP2RG3A9;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
@@ -435,13 +741,14 @@
 			};
 			name = Debug;
 		};
-		A80000000000000000000006 /* FridayTests Release */ = {
+		A80000000000000000000006 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 7WKP2RG3A9;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
@@ -458,8 +765,8 @@
 		A60000000000000000000001 /* Build configuration list for PBXProject "Friday" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A80000000000000000000003 /* Project Debug */,
-				A80000000000000000000004 /* Project Release */,
+				A80000000000000000000003 /* Debug */,
+				A80000000000000000000004 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -476,8 +783,8 @@
 		A60000000000000000000003 /* Build configuration list for PBXNativeTarget "FridayTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				A80000000000000000000005 /* FridayTests Debug */,
-				A80000000000000000000006 /* FridayTests Release */,
+				A80000000000000000000005 /* Debug */,
+				A80000000000000000000006 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -1,0 +1,12 @@
+{
+  "images" : [
+    {
+      "filename" : "云朵.png",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

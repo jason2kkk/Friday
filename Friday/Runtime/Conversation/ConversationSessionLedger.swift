@@ -1,6 +1,6 @@
-// 功能：为每轮 Talk 建立稳定会话身份，累计无内容的用量与成本，并检测短时间异常响应循环。
-// 职责：维护会话开始、用量写入和结束后的快照，拒绝迟到用量，并通过独立时间窗口守卫识别模型响应风暴。
-// 边界：不记录用户音频或文本、不跨重启持久化，也不直接终止 Provider、音频或界面状态。
+// 功能：为每轮 Talk 建立稳定会话身份、无内容用量账本和响应循环保护。
+// 职责：累计 Realtime 响应和独立 Live Transcribe 估算费用、拒绝迟到用量，并区分正常用户回合与没有新用户输入的自主响应风暴。
+// 边界：不记录用户内容、不跨重启持久化，也不直接控制 Provider、音频、诊断文件或界面。
 
 import Foundation
 
@@ -35,6 +35,12 @@ struct ConversationSessionSnapshot: Equatable, Sendable {
 struct ConversationUsageUpdate: Equatable, Sendable {
     let didRecord: Bool
     let responseCostUSD: Double
+    let snapshot: ConversationSessionSnapshot
+}
+
+struct ConversationTranscriptionUsageUpdate: Equatable, Sendable {
+    let didRecord: Bool
+    let costUSD: Double
     let snapshot: ConversationSessionSnapshot
 }
 
@@ -79,6 +85,33 @@ struct ConversationSessionLedger {
     }
 
     @discardableResult
+    mutating func recordTranscription(
+        _ usage: UserTurnTranscriptionUsage
+    ) -> ConversationTranscriptionUsageUpdate {
+        guard snapshot.isActive,
+              let cost = LiveTranscriptionPricing.estimatedCostUSD(for: usage) else {
+            return ConversationTranscriptionUsageUpdate(
+                didRecord: false,
+                costUSD: 0,
+                snapshot: snapshot
+            )
+        }
+
+        snapshot = ConversationSessionSnapshot(
+            id: snapshot.id,
+            isActive: true,
+            completedResponses: snapshot.completedResponses,
+            totalTokens: snapshot.totalTokens,
+            estimatedCostUSD: snapshot.estimatedCostUSD + cost
+        )
+        return ConversationTranscriptionUsageUpdate(
+            didRecord: true,
+            costUSD: cost,
+            snapshot: snapshot
+        )
+    }
+
+    @discardableResult
     mutating func endSession() -> ConversationSessionSnapshot {
         snapshot = ConversationSessionSnapshot(
             id: snapshot.id,
@@ -96,8 +129,12 @@ struct ConversationResponseLoopGuard: Equatable, Sendable {
     let window: TimeInterval
     private(set) var responseTimes: [Date] = []
 
+    var consecutiveResponseCount: Int {
+        responseTimes.count
+    }
+
     static let safety = ConversationResponseLoopGuard(
-        maximumResponses: 10,
+        maximumResponses: 4,
         window: 30
     )
 
@@ -110,5 +147,9 @@ struct ConversationResponseLoopGuard: Equatable, Sendable {
 
     mutating func reset() {
         responseTimes.removeAll(keepingCapacity: true)
+    }
+
+    mutating func recordUserTurn() {
+        reset()
     }
 }

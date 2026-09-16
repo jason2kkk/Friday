@@ -1,5 +1,5 @@
 // 功能：验证本地 Realtime 凭证服务的 HTTP 契约、会话配置和安全保护是否符合预期。
-// 职责：启动本地假 OpenAI 上游，覆盖凭证签发、Talk 参数、累计计数、异常重试循环、错误脱敏和 doctor 诊断。
+// 职责：启动本地假 OpenAI 上游，覆盖存活/就绪分层、凭证签发、Talk Provider-VAD 默认契约与 client-gate 回退、请求保护、错误脱敏和诊断。
 // 边界：测试不读取真实 API Key，不访问真实 OpenAI，也不创建付费模型响应。
 
 import test from "node:test";
@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 const backendDirectory = dirname(fileURLToPath(import.meta.url));
 const serverPath = resolve(backendDirectory, "server.mjs");
 const serviceManagerPath = resolve(backendDirectory, "service-manager.mjs");
+const fakeOpenAIAPIKey = ["s", "k-test-openai-key-000000000000"].join("");
 
 test("session service issues credentials without a cumulative cap and tracks local usage", async (t) => {
   let credentialBody = null;
@@ -21,7 +22,8 @@ test("session service issues credentials without a cumulative cap and tracks loc
     if (request.method === "GET"
         && new Set([
           "/v1/models/gpt-realtime",
-          "/v1/models/gpt-realtime-2.1"
+          "/v1/models/gpt-realtime-2.1",
+          "/v1/models/gpt-realtime-whisper"
         ]).has(request.url)) {
       return sendJSON(response, 200, { id: request.url.split("/").at(-1) });
     }
@@ -47,11 +49,12 @@ test("session service issues credentials without a cumulative cap and tracks loc
     cwd: backendDirectory,
     env: {
       ...process.env,
-      OPENAI_API_KEY: "sk-test-backend-key-000000000000",
+      OPENAI_API_KEY: fakeOpenAIAPIKey,
       OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
       FRIDAY_SESSION_PORT: String(servicePort),
       FRIDAY_CREDENTIAL_BURST_LIMIT: "10",
       FRIDAY_BUDGET_FILE: budgetFile,
+      FRIDAY_TALK_MAX_OUTPUT_TOKENS: "",
       FRIDAY_INPUT_TRANSCRIPTION_MODEL: "gpt-realtime-whisper",
       FRIDAY_INPUT_TRANSCRIPTION_LANGUAGE: "zh",
       FRIDAY_INPUT_TRANSCRIPTION_DELAY: "medium"
@@ -59,22 +62,50 @@ test("session service issues credentials without a cumulative cap and tracks loc
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const health = await fetchJSON(`http://127.0.0.1:${servicePort}/health`);
   assert.equal(health.status, 200);
+  assert.equal(health.body.upstream_status, "unchecked");
   assert.equal(health.body.model, "gpt-realtime-2.1");
   assert.equal(health.body.dictation_reasoning_effort, "minimal");
   assert.equal(health.body.talk_model, "gpt-realtime-2.1");
   assert.equal(health.body.talk_reasoning_effort, "low");
+  assert.equal(health.body.talk_prompt_version, "2026-08-06.desktop-app-actions-v2");
+  assert.equal(health.body.talk_endpointing, "provider_vad");
+  assert.equal(health.body.talk_vad_eagerness, "auto");
+  assert.equal(health.body.talk_interrupt_response, false);
+  assert.equal(health.body.talk_allows_response_interruption, true);
+  assert.equal(health.body.talk_max_output_tokens, null);
+  assert.equal(health.body.talk_response_creation, "provider");
   assert.equal(health.body.sessions_issued, 0);
   assert.equal(health.body.burst_protection_enabled, true);
   assert.equal(health.body.account_balance_readable, false);
   assert.equal(health.body.billing_status, "unknown");
-  assert.equal(health.body.agent_mode, "mock_read_only");
+  assert.equal(health.body.agent_mode, "desktop_app_actions_v2");
+  assert.equal(health.body.work_runtime, "mock_read_only");
+  assert.equal(health.body.automatic_focused_write_enabled, true);
+  assert.equal(health.body.dictation_input_transcription_enabled, false);
+  assert.equal(health.body.talk_input_transcription_enabled, true);
   assert.equal(health.body.input_transcription_enabled, true);
   assert.equal(health.body.input_transcription_model, "gpt-realtime-whisper");
   assert.equal("daily_sessions_remaining" in health.body, false);
+
+  const readiness = await fetchJSON(`http://127.0.0.1:${servicePort}/ready`);
+  assert.equal(readiness.status, 200);
+  assert.equal(readiness.body.upstream_status, "ok");
+
+  const status = await runProcess(
+    process.execPath,
+    [serviceManagerPath, "status"],
+    {
+      ...process.env,
+      FRIDAY_SESSION_PORT: String(servicePort)
+    }
+  );
+  assert.equal(status.code, 0, status.stderr);
+  assert.match(status.stdout, /Local service: listening/);
+  assert.match(status.stdout, /OpenAI models: ready/);
 
   const firstCredential = await fetchJSON(
     `http://127.0.0.1:${servicePort}/v1/realtime/client-secret`,
@@ -82,17 +113,14 @@ test("session service issues credentials without a cumulative cap and tracks loc
   );
   assert.equal(firstCredential.status, 200);
   assert.equal(firstCredential.body.value, "ek_test_ephemeral");
-  assert.equal(firstCredential.body.input_transcription_enabled, true);
+  assert.equal(firstCredential.body.input_transcription_enabled, false);
+  assert.equal(firstCredential.body.input_transcription_model, null);
   assert.equal(firstCredential.body.model, "gpt-realtime-2.1");
   assert.equal(firstCredential.body.reasoning_effort, "minimal");
   assert.equal(credentialBody.session.model, "gpt-realtime-2.1");
   assert.deepEqual(credentialBody.session.output_modalities, ["text"]);
   assert.deepEqual(credentialBody.session.reasoning, { effort: "minimal" });
-  assert.deepEqual(credentialBody.session.audio.input.transcription, {
-    model: "gpt-realtime-whisper",
-    language: "zh",
-    delay: "medium"
-  });
+  assert.equal("transcription" in credentialBody.session.audio.input, false);
 
   const secondCredential = await fetchJSON(
     `http://127.0.0.1:${servicePort}/v1/realtime/client-secret`,
@@ -111,6 +139,68 @@ test("session service issues credentials without a cumulative cap and tracks loc
 
   const budget = JSON.parse(await readFile(budgetFile, "utf8"));
   assert.equal(budget.totalCount, 3);
+});
+
+test("health stays local while readiness bounds a stalled upstream", async (t) => {
+  let modelRequestCount = 0;
+  const upstream = createServer((request, response) => {
+    if (request.method === "GET" && request.url.startsWith("/v1/models/")) {
+      modelRequestCount += 1;
+      setTimeout(() => {
+        if (!response.writableEnded) {
+          sendJSON(response, 200, { id: "gpt-realtime-2.1" });
+        }
+      }, 250);
+      return;
+    }
+    sendJSON(response, 404, { error: { message: "not found" } });
+  });
+  const upstreamPort = await listenOnRandomPort(upstream);
+  t.after(() => upstream.close());
+
+  const servicePort = await unusedPort();
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "friday-readiness-test-"));
+  t.after(() => rm(temporaryDirectory, { recursive: true, force: true }));
+
+  const service = spawn(process.execPath, [serverPath], {
+    cwd: backendDirectory,
+    env: {
+      ...process.env,
+      OPENAI_API_KEY: fakeOpenAIAPIKey,
+      OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
+      FRIDAY_SESSION_PORT: String(servicePort),
+      FRIDAY_BUDGET_FILE: join(temporaryDirectory, "budget.json"),
+      FRIDAY_UPSTREAM_READINESS_TIMEOUT_MS: "50"
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  t.after(() => service.kill("SIGTERM"));
+  await waitForOutput(service, "Olli session service listening");
+
+  const startedAt = performance.now();
+  const health = await fetchJSON(`http://127.0.0.1:${servicePort}/health`);
+  assert.equal(health.status, 200);
+  assert.equal(health.body.upstream_status, "unchecked");
+  assert.equal(modelRequestCount, 0);
+  assert.ok(performance.now() - startedAt < 500);
+
+  const readiness = await fetchJSON(`http://127.0.0.1:${servicePort}/ready`);
+  assert.equal(readiness.status, 503);
+  assert.equal(readiness.body.status, "unavailable");
+  assert.equal(readiness.body.upstream_status, "unavailable");
+  assert.equal(modelRequestCount, 1);
+
+  const status = await runProcess(
+    process.execPath,
+    [serviceManagerPath, "status"],
+    {
+      ...process.env,
+      FRIDAY_SESSION_PORT: String(servicePort)
+    }
+  );
+  assert.equal(status.code, 1);
+  assert.match(status.stdout, /Local service: listening/);
+  assert.match(status.stdout, /OpenAI models: unavailable/);
 });
 
 test("credential burst protection stops an abnormal retry loop", async (t) => {
@@ -137,7 +227,7 @@ test("credential burst protection stops an abnormal retry loop", async (t) => {
     cwd: backendDirectory,
     env: {
       ...process.env,
-      OPENAI_API_KEY: "sk-test-loop-key-000000000000",
+      OPENAI_API_KEY: fakeOpenAIAPIKey,
       OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
       FRIDAY_SESSION_PORT: String(servicePort),
       FRIDAY_BUDGET_FILE: join(temporaryDirectory, "budget.json"),
@@ -147,7 +237,7 @@ test("credential burst protection stops an abnormal retry loop", async (t) => {
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const endpoint = `http://127.0.0.1:${servicePort}/v1/realtime/client-secret`;
   assert.equal((await fetchJSON(endpoint, { method: "POST" })).status, 200);
@@ -183,7 +273,7 @@ test("health reports a billing block observed during credential creation", async
     cwd: backendDirectory,
     env: {
       ...process.env,
-      OPENAI_API_KEY: "sk-test-billing-key-000000000000",
+      OPENAI_API_KEY: fakeOpenAIAPIKey,
       OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
       FRIDAY_SESSION_PORT: String(servicePort),
       FRIDAY_BUDGET_FILE: join(temporaryDirectory, "budget.json")
@@ -191,7 +281,7 @@ test("health reports a billing block observed during credential creation", async
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const endpoint = `http://127.0.0.1:${servicePort}`;
   const blocked = await fetchJSON(`${endpoint}/v1/realtime/client-secret`, {
@@ -206,7 +296,7 @@ test("health reports a billing block observed during credential creation", async
   assert.equal(health.body.account_balance_readable, false);
 });
 
-test("talk mode creates an interruptible audio session with bounded output", async (t) => {
+test("talk mode creates a provider-managed semantic VAD session", async (t) => {
   let credentialBody = null;
   const upstream = createServer(async (request, response) => {
     if (request.method === "GET"
@@ -237,18 +327,19 @@ test("talk mode creates an interruptible audio session with bounded output", asy
     cwd: backendDirectory,
     env: {
       ...process.env,
-      OPENAI_API_KEY: "sk-test-talk-key-000000000000",
+      OPENAI_API_KEY: fakeOpenAIAPIKey,
       OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
       FRIDAY_SESSION_PORT: String(servicePort),
       FRIDAY_BUDGET_FILE: join(temporaryDirectory, "budget.json"),
       FRIDAY_TALK_VOICE: "marin",
-      FRIDAY_TALK_MAX_OUTPUT_TOKENS: "320",
-      FRIDAY_TALK_VAD_EAGERNESS: "high"
+      FRIDAY_TALK_MAX_OUTPUT_TOKENS: "640",
+      FRIDAY_INPUT_TRANSCRIPTION_MODEL: "gpt-4o-mini-transcribe",
+      FRIDAY_INPUT_TRANSCRIPTION_LANGUAGE: "zh"
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const credential = await fetchJSON(
     `http://127.0.0.1:${servicePort}/v1/realtime/client-secret`,
@@ -266,27 +357,212 @@ test("talk mode creates an interruptible audio session with bounded output", asy
   assert.equal("maximum_turns" in credential.body, false);
   assert.equal("maximum_duration_seconds" in credential.body, false);
   assert.deepEqual(credentialBody.session.output_modalities, ["audio"]);
-  assert.equal(credential.body.vad_eagerness, "high");
+  assert.equal(credential.body.endpointing, "provider_vad");
+  assert.equal(credential.body.vad_eagerness, "auto");
+  assert.equal(credential.body.interrupt_response, false);
+  assert.equal(credential.body.allows_response_interruption, true);
   assert.equal(credential.body.reasoning_effort, "low");
-  assert.equal(credential.body.max_output_tokens, 320);
+  assert.equal(credential.body.max_output_tokens, 640);
+  assert.equal(credential.body.prompt_version, "2026-08-06.desktop-app-actions-v2");
+  assert.equal(credential.body.response_creation, "provider");
+  assert.equal(credential.body.agent_tools_enabled, true);
+  assert.equal(credential.body.input_transcription_enabled, true);
+  assert.equal(credential.body.input_transcription_model, "gpt-4o-mini-transcribe");
   assert.equal(credentialBody.session.model, "gpt-realtime-2.1");
   assert.deepEqual(credentialBody.session.reasoning, { effort: "low" });
-  assert.equal(credentialBody.session.max_output_tokens, 320);
+  assert.equal(credentialBody.session.max_output_tokens, 640);
   assert.equal(credentialBody.session.audio.output.voice, "marin");
-  assert.equal(credentialBody.session.audio.input.turn_detection.type, "semantic_vad");
-  assert.equal(credentialBody.session.audio.input.turn_detection.eagerness, "high");
-  assert.equal(credentialBody.session.audio.input.turn_detection.create_response, true);
-  assert.equal(credentialBody.session.audio.input.turn_detection.interrupt_response, true);
+  assert.equal(credentialBody.session.audio.input.noise_reduction.type, "near_field");
+  assert.deepEqual(credentialBody.session.audio.input.transcription, {
+    model: "gpt-4o-mini-transcribe",
+    language: "zh",
+    delay: "minimal"
+  });
+  assert.deepEqual(credentialBody.session.audio.input.turn_detection, {
+    type: "semantic_vad",
+    eagerness: "auto",
+    create_response: true,
+    interrupt_response: false
+  });
   assert.equal(credentialBody.session.tool_choice, "auto");
   assert.deepEqual(
     credentialBody.session.tools.map(tool => tool.name),
-    ["submit_work", "get_work_status", "cancel_work"]
+    [
+      "wait_for_user",
+      "open_application",
+      "write_focused_input",
+      "submit_work",
+      "confirm_work",
+      "discard_work_draft",
+      "get_work_status",
+      "cancel_work"
+    ]
   );
-  assert.match(credentialBody.session.instructions, /Treat "Hey Friday" as the wake phrase/);
-  assert.match(credentialBody.session.instructions, /answer immediately with minimal reasoning/);
-  assert.match(credentialBody.session.instructions, /Use submit_work only/i);
-  assert.match(credentialBody.session.instructions, /most recent selected image/i);
-  assert.match(credentialBody.session.instructions, /read-only architecture preview/i);
+  assert.match(credentialBody.session.instructions, /简体中文是默认回复语言/);
+  assert.match(credentialBody.session.instructions, /不要因为口音、语气词、英文产品名/);
+  assert.match(credentialBody.session.instructions, /只有用户明确要求“创建后台测试任务”/);
+  assert.match(credentialBody.session.instructions, /只有下一轮用户清楚说出“确认提交”/);
+  assert.match(credentialBody.session.instructions, /最终用户转写缺失、失败/);
+  assert.match(credentialBody.session.instructions, /除打开应用和可撤销输入框写入外/);
+  assert.match(credentialBody.session.instructions, /用户要求翻译、解释、总结或识别选区时/);
+  assert.match(credentialBody.session.instructions, /调用 wait_for_user 后不要继续生成口头回复/);
+  assert.match(credentialBody.session.instructions, /持续或完整的人声绝不能/);
+  assert.match(credentialBody.session.instructions, /不能理解就只问一个简短澄清问题/);
+  assert.match(credentialBody.session.instructions, /先说核心结论/);
+  assert.match(credentialBody.session.instructions, /完整结束当前句子/);
+  assert.match(credentialBody.session.instructions, /不说“请告诉我你的需求”/);
+  assert.match(credentialBody.session.instructions, /Codex.*com\.openai\.codex/);
+  assert.match(
+    credentialBody.session.instructions,
+    /同一请求同时包含“打开\/切换应用”和“写入文字”时，只调用 write_focused_input/
+  );
+  assert.match(
+    credentialBody.session.instructions,
+    /打开微信并在输入框写入你好.*只调用 write_focused_input/
+  );
+
+  const waitForUserTool = credentialBody.session.tools.find(
+    tool => tool.name === "wait_for_user"
+  );
+  assert.match(waitForUserTool.description, /没有持续、可辨认的人声/);
+  assert.match(waitForUserTool.description, /内容不清楚时应简短澄清/);
+  assert.deepEqual(waitForUserTool.parameters.required, []);
+
+  const openApplicationTool = credentialBody.session.tools.find(
+    tool => tool.name === "open_application"
+  );
+  assert.match(openApplicationTool.description, /已安装 Bundle/);
+  assert.match(openApplicationTool.description, /直接调用 write_focused_input/);
+  assert.deepEqual(openApplicationTool.parameters.required, ["application"]);
+
+  const writeFocusedInputTool = credentialBody.session.tools.find(
+    tool => tool.name === "write_focused_input"
+  );
+  assert.match(writeFocusedInputTool.description, /可通过 Command-Z 撤销/);
+  assert.deepEqual(writeFocusedInputTool.parameters.required, ["text"]);
+  assert.equal(writeFocusedInputTool.parameters.properties.application.type, "string");
+
+  const submitWorkTool = credentialBody.session.tools.find(
+    tool => tool.name === "submit_work"
+  );
+  assert.match(submitWorkTool.description, /仅用于内部 Alpha/);
+  assert.match(submitWorkTool.description, /不得用它代替真实操作/);
+  assert.doesNotMatch(submitWorkTool.description, /current information/i);
+});
+
+test("talk keeps reversible input write but hides Work tools without final ASR", async (t) => {
+  let credentialBody = null;
+  const upstream = createServer(async (request, response) => {
+    if (request.method === "GET" && request.url.startsWith("/v1/models/")) {
+      return sendJSON(response, 200, { id: "gpt-realtime-2.1" });
+    }
+    if (request.method === "POST" && request.url === "/v1/realtime/client_secrets") {
+      credentialBody = JSON.parse(await readBody(request));
+      return sendJSON(response, 200, {
+        value: "ek_test_talk_without_asr",
+        session: { model: "gpt-realtime-2.1" }
+      });
+    }
+    sendJSON(response, 404, { error: { message: "not found" } });
+  });
+  const upstreamPort = await listenOnRandomPort(upstream);
+  t.after(() => upstream.close());
+
+  const servicePort = await unusedPort();
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "friday-talk-no-asr-"));
+  t.after(() => rm(temporaryDirectory, { recursive: true, force: true }));
+  const service = spawn(process.execPath, [serverPath], {
+    cwd: backendDirectory,
+    env: {
+      ...process.env,
+      OPENAI_API_KEY: fakeOpenAIAPIKey,
+      OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
+      FRIDAY_SESSION_PORT: String(servicePort),
+      FRIDAY_BUDGET_FILE: join(temporaryDirectory, "budget.json"),
+      FRIDAY_TALK_MAX_OUTPUT_TOKENS: "",
+      FRIDAY_INPUT_TRANSCRIPTION_MODEL: ""
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  t.after(() => service.kill("SIGTERM"));
+  await waitForOutput(service, "Olli session service listening");
+
+  const credential = await fetchJSON(
+    `http://127.0.0.1:${servicePort}/v1/realtime/client-secret`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "talk" })
+    }
+  );
+
+  assert.equal(credential.status, 200);
+  assert.equal("max_output_tokens" in credential.body, false);
+  assert.equal(credential.body.input_transcription_enabled, false);
+  assert.equal(credential.body.agent_tools_enabled, true);
+  assert.equal(credential.body.automatic_focused_write_enabled, true);
+  assert.deepEqual(
+    credentialBody.session.tools.map(tool => tool.name),
+    ["wait_for_user", "open_application", "write_focused_input"]
+  );
+  assert.equal("max_output_tokens" in credentialBody.session, false);
+  assert.deepEqual(credentialBody.session.audio.input.turn_detection, {
+    type: "semantic_vad",
+    eagerness: "auto",
+    create_response: true,
+    interrupt_response: false
+  });
+});
+
+test("talk keeps client-gate endpointing as an explicit fallback", async (t) => {
+  let credentialBody = null;
+  const upstream = createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/v1/realtime/client_secrets") {
+      credentialBody = JSON.parse(await readBody(request));
+      return sendJSON(response, 200, {
+        value: "ek_test_client_gate_fallback",
+        session: { model: "gpt-realtime-2.1" }
+      });
+    }
+    sendJSON(response, 404, { error: { message: "not found" } });
+  });
+  const upstreamPort = await listenOnRandomPort(upstream);
+  t.after(() => upstream.close());
+
+  const servicePort = await unusedPort();
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "friday-client-gate-"));
+  t.after(() => rm(temporaryDirectory, { recursive: true, force: true }));
+  const service = spawn(process.execPath, [serverPath], {
+    cwd: backendDirectory,
+    env: {
+      ...process.env,
+      OPENAI_API_KEY: fakeOpenAIAPIKey,
+      OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
+      FRIDAY_SESSION_PORT: String(servicePort),
+      FRIDAY_BUDGET_FILE: join(temporaryDirectory, "budget.json"),
+      FRIDAY_TALK_ENDPOINTING: "client_gate"
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  t.after(() => service.kill("SIGTERM"));
+  await waitForOutput(service, "Olli session service listening");
+
+  const credential = await fetchJSON(
+    `http://127.0.0.1:${servicePort}/v1/realtime/client-secret`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "talk" })
+    }
+  );
+
+  assert.equal(credential.status, 200);
+  assert.equal(credential.body.endpointing, "client_gate");
+  assert.equal(credential.body.vad_eagerness, null);
+  assert.equal(credential.body.response_creation, "client");
+  assert.equal(credential.body.interrupt_response, false);
+  assert.equal(credential.body.allows_response_interruption, true);
+  assert.equal(credentialBody.session.audio.input.turn_detection, null);
 });
 
 test("work API deduplicates submissions, completes, reports, and cancels", async (t) => {
@@ -295,14 +571,14 @@ test("work API deduplicates submissions, completes, reports, and cancels", async
     cwd: backendDirectory,
     env: {
       ...process.env,
-      OPENAI_API_KEY: "sk-test-work-key-000000000000",
+      OPENAI_API_KEY: fakeOpenAIAPIKey,
       FRIDAY_SESSION_PORT: String(servicePort),
       FRIDAY_MOCK_AGENT_DELAY_MS: "120"
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
   const endpoint = `http://127.0.0.1:${servicePort}/v1/work`;
   const submission = {
@@ -352,10 +628,12 @@ test("work API deduplicates submissions, completes, reports, and cancels", async
   assert.equal(invalid.status, 400);
 });
 
-test("health errors redact upstream API key fragments", async (t) => {
+test("readiness errors redact upstream API key fragments", async (t) => {
   const upstream = createServer((_request, response) => {
     sendJSON(response, 401, {
-      error: { message: "Incorrect API key provided: sk-secret-upstream-value" }
+      error: {
+        message: `Incorrect API key provided: ${["s", "k-secret-upstream-value"].join("")}`
+      }
     });
   });
   const upstreamPort = await listenOnRandomPort(upstream);
@@ -369,7 +647,7 @@ test("health errors redact upstream API key fragments", async (t) => {
     cwd: backendDirectory,
     env: {
       ...process.env,
-      OPENAI_API_KEY: "sk-test-backend-key-000000000000",
+      OPENAI_API_KEY: fakeOpenAIAPIKey,
       OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
       FRIDAY_SESSION_PORT: String(servicePort),
       FRIDAY_BUDGET_FILE: join(temporaryDirectory, "budget.json")
@@ -377,12 +655,12 @@ test("health errors redact upstream API key fragments", async (t) => {
     stdio: ["ignore", "pipe", "pipe"]
   });
   t.after(() => service.kill("SIGTERM"));
-  await waitForOutput(service, "Friday session service listening");
+  await waitForOutput(service, "Olli session service listening");
 
-  const health = await fetchJSON(`http://127.0.0.1:${servicePort}/health`);
-  assert.equal(health.status, 503);
-  assert.equal(health.body.error.includes("sk-secret"), false);
-  assert.match(health.body.error, /\[REDACTED_API_KEY\]/);
+  const readiness = await fetchJSON(`http://127.0.0.1:${servicePort}/ready`);
+  assert.equal(readiness.status, 503);
+  assert.equal(readiness.body.error.includes("sk-secret"), false);
+  assert.match(readiness.body.error, /\[REDACTED_API_KEY\]/);
 });
 
 test("doctor validates the configured model without creating a Realtime session", async (t) => {
@@ -405,7 +683,7 @@ test("doctor validates the configured model without creating a Realtime session"
 
   const result = await runProcess(process.execPath, [serviceManagerPath, "doctor", "--env"], {
     ...process.env,
-    OPENAI_API_KEY: "sk-test-doctor-key-000000000000",
+    OPENAI_API_KEY: fakeOpenAIAPIKey,
     OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
     FRIDAY_SESSION_PORT: String(await unusedPort()),
     FRIDAY_REALTIME_MODEL: "gpt-realtime-2.1",
@@ -417,8 +695,8 @@ test("doctor validates the configured model without creating a Realtime session"
     result.stdout,
     /OpenAI: ready \(Dictate: gpt-realtime-2\.1; Talk: gpt-realtime-2\.1\)/
   );
-  assert.equal(result.stdout.includes("sk-test-doctor"), false);
-  assert.equal(result.stderr.includes("sk-test-doctor"), false);
+  assert.equal(result.stdout.includes(fakeOpenAIAPIKey), false);
+  assert.equal(result.stderr.includes(fakeOpenAIAPIKey), false);
   assert.equal(credentialRequestCount, 0);
 });
 
@@ -434,7 +712,7 @@ test("doctor reports an upstream rejection without an initialization failure", a
     [serviceManagerPath, "doctor", "--env"],
     {
       ...process.env,
-      OPENAI_API_KEY: "sk-test-rejected-key-000000000000",
+      OPENAI_API_KEY: fakeOpenAIAPIKey,
       OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
       FRIDAY_SESSION_PORT: String(await unusedPort()),
       FRIDAY_REALTIME_MODEL: "gpt-realtime-2.1",

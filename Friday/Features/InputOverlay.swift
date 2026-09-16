@@ -1,5 +1,5 @@
 // 功能：通过不抢焦点的顶部灵动岛持续展示 Dictate 与 Talk 的录音、处理、结果和恢复反馈。
-// 职责：定义浮层状态模型、仪表盘数据、NSPanel 生命周期与 SwiftUI 内容，处理展开收起、动画以及取消、重试、复制等用户事件。
+// 职责：定义浮层状态模型、原生玻璃窗口层级、NSPanel 生命周期与 SwiftUI 内容，并处理展开收起和用户事件。
 // 边界：不采集音频、不调用模型、不查找输入目标；所有业务操作均通过模型回调交还应用工作流。
 
 import AppKit
@@ -28,15 +28,21 @@ enum InputOverlayPhase: Equatable {
     }
 }
 
+enum InputOverlayExpandedPage: Equatable {
+    case dashboard
+    case settings
+}
+
 /// 功能：根据当前屏幕的刘海和菜单栏计算灵动岛尺寸。
-/// 职责：让紧凑态内容只使用刘海两侧的安全区域，展开态保持固定窗口尺寸。
+/// 职责：让紧凑态内容只使用刘海两侧的安全区域，并为主页与设置形态提供固定目标尺寸。
 struct InputOverlaySizing {
-    static let expandedSize = NSSize(width: 620, height: 360)
-    static let compactWingWidth: CGFloat = 82
+    static let expandedSize = NSSize(width: 520, height: 300)
+    static let settingsSize = NSSize(width: 400, height: 480)
+    static let compactWingWidth: CGFloat = 52
     static let shadowPadding: CGFloat = 10
     static let windowSize = NSSize(
-        width: expandedSize.width + shadowPadding * 2,
-        height: expandedSize.height + shadowPadding * 2
+        width: max(expandedSize.width, settingsSize.width),
+        height: max(expandedSize.height, settingsSize.height) + shadowPadding
     )
 
     let compactSize: CGSize
@@ -88,12 +94,15 @@ final class InputOverlayModel: ObservableObject {
     @Published var audioLevel: Float = 0
     @Published var isVoiceActive = false
     @Published var waveformLevels = silentWaveformLevels
-    @Published var compactSize = CGSize(width: 344, height: 32)
+    @Published var compactSize = CGSize(width: 264, height: 32)
     @Published var centerGapWidth: CGFloat = 160
     @Published var isAppearing = false
     @Published var isCollapsing = false
     @Published var isDashboardExpanded = false
-    @Published var dashboard = IslandDashboardSnapshot()
+    @Published var expandedPage: InputOverlayExpandedPage = .dashboard
+    @Published var dashboard = AppDashboardSnapshot()
+    @Published var computerUseTaskState: ComputerUseTaskState = .idle
+    @Published var computerUseTaskPath = TextEditSmokeTask.makeDefault().outputURL.path
 
     var isExpanded: Bool {
         if isDashboardExpanded { return true }
@@ -110,8 +119,17 @@ final class InputOverlayModel: ObservableObject {
         return false
     }
 
+    var currentExpandedSize: CGSize {
+        switch expandedPage {
+        case .dashboard:
+            return InputOverlaySizing.expandedSize
+        case .settings:
+            return InputOverlaySizing.settingsSize
+        }
+    }
+
     var currentSize: CGSize {
-        isExpanded ? InputOverlaySizing.expandedSize : compactSize
+        isExpanded ? currentExpandedSize : compactSize
     }
 
     var onRetry: (() -> Void)?
@@ -126,7 +144,12 @@ final class InputOverlayModel: ObservableObject {
     var onClearLastOutput: (() -> Void)?
     var onRefresh: (() -> Void)?
     var onQuit: (() -> Void)?
+    var onOpenWorkspace: (() -> Void)?
+    var onRunComputerUseSmokeTask: (() -> Void)?
+    var onCancelComputerUseTask: (() -> Void)?
     var onCollapseDashboard: (() -> Void)?
+    var onPresentSettings: (() -> Void)?
+    var onPresentDashboard: (() -> Void)?
 }
 
 private final class InputOverlayPanel: NSPanel {
@@ -134,10 +157,229 @@ private final class InputOverlayPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+private enum InputOverlayShapeMetrics {
+    static let compactTopCornerRadius: CGFloat = 6
+    static let compactBottomCornerRadius: CGFloat = 14
+    static let expandedTopCornerRadius: CGFloat = 10
+    static let expandedBottomCornerRadius: CGFloat = 28
+
+    static func path(
+        in rect: CGRect,
+        topCornerRadius: CGFloat,
+        bottomCornerRadius: CGFloat
+    ) -> CGPath {
+        let path = CGMutablePath()
+        let top = topCornerRadius
+        let bottom = bottomCornerRadius
+
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + top, y: rect.maxY - top),
+            control: CGPoint(x: rect.minX + top, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + top, y: rect.minY + bottom))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + top + bottom, y: rect.minY),
+            control: CGPoint(x: rect.minX + top, y: rect.minY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - top - bottom, y: rect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - top, y: rect.minY + bottom),
+            control: CGPoint(x: rect.maxX - top, y: rect.minY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - top, y: rect.maxY - top))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.maxY),
+            control: CGPoint(x: rect.maxX - top, y: rect.maxY)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// 承载不带独立轮廓的原生玻璃，由根视图统一裁切玻璃、渐变和内容。
+private final class InputOverlayBackdropView: NSView {
+    private let effectView: NSView
+
+    override init(frame frameRect: NSRect) {
+        if #available(macOS 26.0, *) {
+            let glassView = NSGlassEffectView()
+            glassView.appearance = NSAppearance(named: .darkAqua)
+            glassView.style = .clear
+            glassView.tintColor = NSColor.black.withAlphaComponent(0.68)
+            glassView.cornerRadius = 0
+            effectView = glassView
+        } else {
+            let visualEffectView = NSVisualEffectView()
+            visualEffectView.material = .hudWindow
+            visualEffectView.blendingMode = .behindWindow
+            visualEffectView.state = .active
+            effectView = visualEffectView
+        }
+
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        effectView.frame = bounds
+        effectView.autoresizingMask = [.width, .height]
+        addSubview(effectView)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        effectView.frame = bounds
+    }
+}
+
+/// 让原生玻璃直接位于窗口根层，SwiftUI 只负责玻璃上方的内容与遮罩。
+private final class InputOverlayRootView: NSView {
+    private let backdropView: InputOverlayBackdropView
+    private let shapeMaskLayer = CAShapeLayer()
+    private var compactSize = CGSize(width: 264, height: 32)
+    private var expandedSize = InputOverlaySizing.expandedSize
+    private var isExpanded = false
+    private var isTransitioning = false
+    private var transitionGeneration = 0
+
+    override init(frame frameRect: NSRect) {
+        backdropView = InputOverlayBackdropView(frame: .zero)
+
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        shapeMaskLayer.fillColor = NSColor.white.cgColor
+        shapeMaskLayer.frame = bounds
+        shapeMaskLayer.path = currentMaskPath
+        layer?.mask = shapeMaskLayer
+        backdropView.alphaValue = 0
+        backdropView.isHidden = true
+        addSubview(backdropView)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        guard !isTransitioning else { return }
+        backdropView.frame = isExpanded ? expandedFrame : compactFrame
+        shapeMaskLayer.frame = bounds
+        shapeMaskLayer.path = currentMaskPath
+    }
+
+    func setExpanded(
+        _ expanded: Bool,
+        expandedSize: CGSize,
+        compactSize: CGSize,
+        animated: Bool
+    ) {
+        let previousExpandedSize = self.expandedSize
+        self.compactSize = compactSize
+        self.expandedSize = expandedSize
+        let wasExpanded = isExpanded
+        let sizeChanged = previousExpandedSize != expandedSize
+        let previousMaskPath = shapeMaskLayer.presentation()?.path
+            ?? shapeMaskLayer.path
+        isExpanded = expanded
+        transitionGeneration += 1
+        let currentGeneration = transitionGeneration
+
+        backdropView.layer?.removeAllAnimations()
+        backdropView.isHidden = false
+
+        if expanded && !wasExpanded {
+            backdropView.frame = compactFrame
+        }
+        backdropView.alphaValue = 1
+
+        let targetFrame = expanded ? expandedFrame : compactFrame
+        let targetMaskPath = currentMaskPath
+        guard animated, wasExpanded != expanded || (expanded && sizeChanged) else {
+            isTransitioning = false
+            backdropView.frame = targetFrame
+            shapeMaskLayer.path = targetMaskPath
+            backdropView.alphaValue = expanded ? 1 : 0
+            backdropView.isHidden = !expanded
+            return
+        }
+
+        isTransitioning = true
+        shapeMaskLayer.path = targetMaskPath
+        let maskAnimation = CABasicAnimation(keyPath: "path")
+        maskAnimation.fromValue = previousMaskPath
+        maskAnimation.toValue = targetMaskPath
+        maskAnimation.duration = expanded ? 0.36 : 0.3
+        maskAnimation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        shapeMaskLayer.add(maskAnimation, forKey: "islandShape")
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = expanded ? 0.36 : 0.3
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            backdropView.animator().frame = targetFrame
+        } completionHandler: { [weak self] in
+            guard let self,
+                  self.isExpanded == expanded,
+                  self.transitionGeneration == currentGeneration else { return }
+            self.isTransitioning = false
+            self.backdropView.frame = targetFrame
+            self.shapeMaskLayer.path = targetMaskPath
+            self.backdropView.alphaValue = expanded ? 1 : 0
+            self.backdropView.isHidden = !expanded
+            self.needsLayout = true
+        }
+    }
+
+    private var expandedFrame: NSRect {
+        NSRect(
+            x: (bounds.width - expandedSize.width) / 2,
+            y: bounds.height - expandedSize.height,
+            width: expandedSize.width,
+            height: expandedSize.height
+        )
+    }
+
+    private var compactFrame: NSRect {
+        NSRect(
+            x: (bounds.width - compactSize.width) / 2,
+            y: bounds.height - compactSize.height,
+            width: compactSize.width,
+            height: compactSize.height
+        )
+    }
+
+    private var currentMaskPath: CGPath {
+        let size = isExpanded ? expandedSize : compactSize
+        let rect = NSRect(
+            x: (bounds.width - size.width) / 2,
+            y: bounds.height - size.height,
+            width: size.width,
+            height: size.height
+        )
+        let topRadius = isExpanded
+            ? InputOverlayShapeMetrics.expandedTopCornerRadius
+            : InputOverlayShapeMetrics.compactTopCornerRadius
+        let bottomRadius = isExpanded
+            ? InputOverlayShapeMetrics.expandedBottomCornerRadius
+            : InputOverlayShapeMetrics.compactBottomCornerRadius
+        return InputOverlayShapeMetrics.path(
+            in: rect,
+            topCornerRadius: topRadius,
+            bottomCornerRadius: bottomRadius
+        )
+    }
+}
+
 @MainActor
 final class InputOverlayController {
     private let model: InputOverlayModel
     private let panel: InputOverlayPanel
+    private let rootView: InputOverlayRootView
     private var activeScreen: NSScreen?
     private var globalEscapeMonitor: Any?
     private var localEscapeMonitor: Any?
@@ -158,9 +400,17 @@ final class InputOverlayController {
             defer: false
         )
 
-        panel.contentViewController = NSHostingController(
-            rootView: InputOverlayView(model: model)
+        rootView = InputOverlayRootView(
+            frame: NSRect(origin: .zero, size: InputOverlaySizing.windowSize)
         )
+        let hostingView = NSHostingView(rootView: InputOverlayView(model: model))
+        hostingView.frame = NSRect(origin: .zero, size: InputOverlaySizing.windowSize)
+        hostingView.autoresizingMask = [.width, .height]
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        rootView.addSubview(hostingView, positioned: .above, relativeTo: nil)
+        panel.contentView = rootView
+        panel.isFloatingPanel = true
         panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.mainMenuWindow)) + 3)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.backgroundColor = .clear
@@ -175,6 +425,12 @@ final class InputOverlayController {
 
         model.onCollapseDashboard = { [weak self] in
             self?.collapseDashboard()
+        }
+        model.onPresentSettings = { [weak self] in
+            self?.presentExpandedPage(.settings)
+        }
+        model.onPresentDashboard = { [weak self] in
+            self?.presentExpandedPage(.dashboard)
         }
         installEventMonitors()
         screenObserver = NotificationCenter.default.addObserver(
@@ -226,12 +482,16 @@ final class InputOverlayController {
         model.phase = phase
         switch phase {
         case .failure, .result, .notice:
+            model.expandedPage = .dashboard
             model.isDashboardExpanded = true
         case .idle, .hidden:
             break
         default:
+            model.expandedPage = .dashboard
             model.isDashboardExpanded = false
         }
+        panel.hasShadow = model.isExpanded
+        panel.invalidateShadow()
         panel.ignoresMouseEvents = !model.isExpanded
         if case .failure = phase {
             model.onRefresh?()
@@ -241,6 +501,12 @@ final class InputOverlayController {
         let sizing = InputOverlaySizing.fromScreen(screen)
         model.compactSize = sizing.compactSize
         model.centerGapWidth = sizing.centerGapWidth
+        rootView.setExpanded(
+            model.isExpanded,
+            expandedSize: model.currentExpandedSize,
+            compactSize: sizing.compactSize,
+            animated: panel.isVisible
+        )
         let targetFrame = frame(for: InputOverlaySizing.windowSize, on: screen)
         panel.setFrame(targetFrame, display: true)
 
@@ -281,6 +547,13 @@ final class InputOverlayController {
         }
 
         model.isDashboardExpanded = false
+        rootView.setExpanded(
+            false,
+            expandedSize: model.currentExpandedSize,
+            compactSize: model.compactSize,
+            animated: true
+        )
+        model.expandedPage = .dashboard
         model.isCollapsing = true
         dismissalTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(180))
@@ -318,6 +591,15 @@ final class InputOverlayController {
         model.waveformLevels = InputOverlayModel.silentWaveformLevels
         model.isAppearing = false
         model.isCollapsing = false
+        model.expandedPage = .dashboard
+        rootView.setExpanded(
+            false,
+            expandedSize: model.currentExpandedSize,
+            compactSize: model.compactSize,
+            animated: false
+        )
+        panel.hasShadow = false
+        panel.invalidateShadow()
         panel.alphaValue = 1
         panel.ignoresMouseEvents = true
         panel.orderFrontRegardless()
@@ -325,9 +607,18 @@ final class InputOverlayController {
 
     private func expandDashboard() {
         guard panel.isVisible, !model.isExpanded else { return }
+        model.expandedPage = .dashboard
         model.isDashboardExpanded = true
+        rootView.setExpanded(
+            true,
+            expandedSize: model.currentExpandedSize,
+            compactSize: model.compactSize,
+            animated: true
+        )
+        panel.hasShadow = true
+        panel.invalidateShadow()
         panel.ignoresMouseEvents = false
-        panel.orderFrontRegardless()
+        panel.makeKeyAndOrderFront(nil)
         model.onRefresh?()
     }
 
@@ -343,7 +634,28 @@ final class InputOverlayController {
             model.phase = .idle
         }
         model.isDashboardExpanded = false
+        rootView.setExpanded(
+            false,
+            expandedSize: model.currentExpandedSize,
+            compactSize: model.compactSize,
+            animated: true
+        )
+        model.expandedPage = .dashboard
+        panel.hasShadow = false
+        panel.invalidateShadow()
+        panel.resignKey()
         panel.ignoresMouseEvents = true
+    }
+
+    private func presentExpandedPage(_ page: InputOverlayExpandedPage) {
+        guard model.isExpanded, model.expandedPage != page else { return }
+        model.expandedPage = page
+        rootView.setExpanded(
+            true,
+            expandedSize: model.currentExpandedSize,
+            compactSize: model.compactSize,
+            animated: true
+        )
     }
 
     private func installEventMonitors() {
@@ -425,7 +737,7 @@ final class InputOverlayController {
     }
 
     private var expandedFrameInScreen: NSRect {
-        visibleFrameInScreen(size: InputOverlaySizing.expandedSize)
+        visibleFrameInScreen(size: model.currentExpandedSize)
     }
 
     private func visibleFrameInScreen(size: CGSize) -> NSRect {
@@ -444,6 +756,12 @@ final class InputOverlayController {
         let sizing = InputOverlaySizing.fromScreen(activeScreen)
         model.compactSize = sizing.compactSize
         model.centerGapWidth = sizing.centerGapWidth
+        rootView.setExpanded(
+            model.isExpanded,
+            expandedSize: model.currentExpandedSize,
+            compactSize: sizing.compactSize,
+            animated: false
+        )
         panel.setFrame(
             frame(for: InputOverlaySizing.windowSize, on: activeScreen),
             display: true
@@ -478,7 +796,7 @@ final class InputOverlayController {
         case "result":
             show(
                 .result(
-                    text: "这是 Friday 整理后的示例文字，用于检查灵动岛展开状态。",
+                    text: "这是 Olli 整理后的示例文字，用于检查灵动岛展开状态。",
                     message: "未找到可安全写入的输入框",
                     canRetry: true
                 )
@@ -499,41 +817,45 @@ private struct InputOverlayView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            VStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    if model.isExpanded {
-                        Color.clear.frame(height: 6)
-                        expandedContent
-                    } else {
+            ZStack(alignment: .topLeading) {
+                ZStack(alignment: .top) {
+                    InputOverlayAtmosphereView(
+                        phase: model.phase,
+                        isExpanded: model.isExpanded
+                    )
+                    .zIndex(0)
+
+                    VStack(spacing: 0) {
                         compactContent
+                            .frame(height: model.isExpanded ? 6 : model.compactSize.height)
+                            .opacity(model.isExpanded ? 0 : 1)
+
+                        if model.isExpanded {
+                            expandedContent
+                                .transition(
+                                    .scale(scale: 0.96, anchor: .top)
+                                        .combined(with: .opacity)
+                                )
+                        }
                     }
+                    .zIndex(1)
                 }
                 .frame(
                     width: model.currentSize.width,
                     height: model.currentSize.height,
                     alignment: .top
                 )
-                .background {
-                    InputOverlayAtmosphereView(phase: model.phase)
-                }
-                .clipShape(
-                    NotchShape(
-                        topCornerRadius: model.isExpanded ? 10 : 6,
-                        bottomCornerRadius: model.isExpanded ? 28 : 14
-                    )
-                )
                 .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(.black)
-                        .frame(height: 1)
-                        .padding(.horizontal, model.isExpanded ? 10 : 6)
+                    if !model.isExpanded {
+                        Rectangle()
+                            .fill(.black)
+                            .frame(height: 1)
+                            .padding(
+                                .horizontal,
+                                InputOverlayShapeMetrics.compactTopCornerRadius
+                            )
+                    }
                 }
-                .animation(
-                    model.isExpanded
-                        ? .spring(response: 0.42, dampingFraction: 0.75)
-                        : .spring(response: 0.35, dampingFraction: 0.9),
-                    value: model.isExpanded
-                )
                 .scaleEffect(
                     x: model.isCollapsing ? 0.72 : (model.isAppearing ? 0.84 : 1),
                     y: model.isCollapsing ? 0.82 : (model.isAppearing ? 0.88 : 1),
@@ -548,13 +870,28 @@ private struct InputOverlayView: View {
                     .easeIn(duration: 0.18),
                     value: model.isCollapsing
                 )
-
-                Spacer(minLength: 0)
+                .position(
+                    x: geometry.size.width / 2,
+                    y: model.currentSize.height / 2
+                )
             }
-            .frame(width: geometry.size.width, alignment: .center)
-            .animation(.easeInOut(duration: 0.18), value: model.phase)
+            .frame(
+                width: geometry.size.width,
+                height: geometry.size.height,
+                alignment: .topLeading
+            )
+            .animation(
+                .easeInOut(duration: model.isExpanded ? 0.36 : 0.3),
+                value: model.isExpanded
+            )
+            .animation(
+                .easeInOut(duration: 0.36),
+                value: model.expandedPage
+            )
         }
         .ignoresSafeArea()
+        .preferredColorScheme(.dark)
+        .environment(\.controlActiveState, .active)
     }
 
     @ViewBuilder
@@ -578,10 +915,14 @@ private struct InputOverlayView: View {
     private var idleContent: some View {
         HStack(spacing: 0) {
             compactWing {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
+                Image("灵动岛紧凑图标")
+                    .renderingMode(.original)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 22, height: 22)
                     .offset(x: 4)
+                    .accessibilityLabel("Olli")
             }
 
             Color.clear
@@ -692,38 +1033,4 @@ private struct InputOverlayView: View {
             .frame(maxHeight: .infinity, alignment: .center)
     }
 
-}
-
-private struct NotchShape: Shape {
-    var topCornerRadius: CGFloat
-    var bottomCornerRadius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let top = topCornerRadius
-        let bottom = bottomCornerRadius
-
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX + top, y: rect.minY + top),
-            control: CGPoint(x: rect.minX + top, y: rect.minY)
-        )
-        path.addLine(to: CGPoint(x: rect.minX + top, y: rect.maxY - bottom))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX + top + bottom, y: rect.maxY),
-            control: CGPoint(x: rect.minX + top, y: rect.maxY)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX - top - bottom, y: rect.maxY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - top, y: rect.maxY - bottom),
-            control: CGPoint(x: rect.maxX - top, y: rect.maxY)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX - top, y: rect.minY + top))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.minY),
-            control: CGPoint(x: rect.maxX - top, y: rect.minY)
-        )
-        path.closeSubpath()
-        return path
-    }
 }

@@ -1,5 +1,5 @@
 // 功能：定义 Friday Talk 双向语音对话的中立状态、事件、身份和值类型，以及可替换的 Provider 接口。
-// 职责：统一连接、音频、图片上下文、取消和用量事件，集中声明模式、价格估算、提示词，并提供零成本 Mock Provider。
+// 职责：统一连接、端点模式、音频、图片上下文、取消和用量事件，集中声明限制、价格估算、提示词，并提供零成本 Mock Provider。
 // 边界：不建立真实网络连接、不访问音频设备，也不包含灵动岛或会话窗口的具体展示逻辑。
 
 import Foundation
@@ -21,21 +21,21 @@ enum ConversationState: Equatable {
     var statusText: String {
         switch self {
         case .dormant:
-            return "Hey Friday 已暂停"
+            return "Hey Olli 已暂停"
         case .requestingPermission:
-            return "正在准备 Hey Friday"
+            return "正在准备 Hey Olli"
         case .waitingForWakeWord:
-            return "可以直接说 Hey Friday"
+            return "可以直接说 Hey Olli"
         case .connecting:
-            return "Friday 已被唤醒"
+            return "Olli 已被唤醒"
         case .listening, .userSpeaking:
-            return "正在和 Friday 对话"
+            return "正在和 Olli 对话"
         case .selectingScreenRegion:
-            return "拖动选择 Friday 要看的区域"
+            return "拖动选择 Olli 要看的区域"
         case .capturingScreenRegion:
-            return "Friday 正在查看所选区域"
+            return "Olli 正在查看所选区域"
         case .assistantPreparing, .assistantSpeaking:
-            return "Friday 正在回应"
+            return "Olli 正在回应"
         case .ending:
             return "正在结束对话"
         case .unavailable(let message):
@@ -52,6 +52,11 @@ enum ConversationState: Equatable {
             return false
         }
     }
+}
+
+enum ConversationEndpointMode: String, Equatable, Sendable {
+    case providerVAD = "provider_vad"
+    case clientGate = "client_gate"
 }
 
 struct ConversationImage: Sendable, Equatable {
@@ -115,12 +120,36 @@ struct ConversationToolCall: Equatable, Sendable {
     let responseID: ConversationProviderResponseID?
 }
 
+struct ConversationInputTranscription: Equatable, Sendable {
+    let itemID: ConversationProviderItemID
+    let text: String
+    let language: String?
+    let confidence: Double?
+    let usage: UserTurnTranscriptionUsage?
+}
+
+struct ConversationInputTranscriptionDelta: Equatable, Sendable {
+    let itemID: ConversationProviderItemID
+    let delta: String
+}
+
+struct ConversationInputTranscriptionFailure: Equatable, Sendable {
+    let itemID: ConversationProviderItemID
+    let code: String?
+}
+
 enum ConversationEvent: Equatable {
     case sessionReady
     case userSpeechStarted(itemID: ConversationProviderItemID?)
     case userSpeechStopped(itemID: ConversationProviderItemID?)
+    case userAudioCommitted(itemID: ConversationProviderItemID)
+    case userTranscriptionDelta(ConversationInputTranscriptionDelta)
+    case userTranscriptionCompleted(ConversationInputTranscription)
+    case userTranscriptionFailed(ConversationInputTranscriptionFailure)
     case assistantResponseStarted(responseID: ConversationProviderResponseID?)
     case assistantItemStarted(ConversationProviderEventIdentity)
+    // A runtime-managed audio path has begun playback; no PCM should be replayed locally.
+    case assistantPlaybackStarted(ConversationProviderEventIdentity)
     case assistantAudio(identity: ConversationProviderEventIdentity, data: Data)
     case assistantAudioFinished(ConversationProviderEventIdentity)
     case assistantTranscriptDelta(
@@ -133,18 +162,28 @@ enum ConversationEvent: Equatable {
         usage: DictationUsage
     )
     case responseCancelled(responseID: ConversationProviderResponseID?)
+    case assistantCancellationIgnored(code: String?)
     case failed(String)
 }
 
 @MainActor
 protocol ConversationProviding: AnyObject {
     var onEvent: ((ConversationEvent) -> Void)? { get set }
+    var endpointMode: ConversationEndpointMode { get }
+    var allowsResponseInterruption: Bool { get }
 
     func connect() async throws
     func append(_ chunk: AudioChunk)
     func setScreenContext(_ image: ConversationImage) async throws
+    func requestUserResponse() async throws
+    func clearPendingUserAudio() async throws
+    func discardUserAudioItem(_ itemID: ConversationProviderItemID)
     func requestOpeningGreeting()
-    func provideToolOutput(callID: ConversationToolCallID, output: String) async throws
+    func provideToolOutput(
+        callID: ConversationToolCallID,
+        output: String,
+        createsResponse: Bool
+    ) async throws
     func presentCompletedWork(_ result: String) async throws
     func cancelAssistantResponse()
     func truncateAssistantResponse(
@@ -152,6 +191,12 @@ protocol ConversationProviding: AnyObject {
         audioEndMilliseconds: Int
     )
     func disconnect()
+}
+
+extension ConversationProviding {
+    var endpointMode: ConversationEndpointMode { .providerVAD }
+    var allowsResponseInterruption: Bool { false }
+    func clearPendingUserAudio() async throws {}
 }
 
 enum ConversationMode {
@@ -168,13 +213,11 @@ enum ConversationMode {
 enum ConversationLimits {
     static let idleTimeout: Duration = .seconds(20)
     static let openingGreetingDelay: Duration = .seconds(5)
-    static let openingGreetingMaximumTokens = 48
-    static let toolFollowUpMaximumTokens = 80
-    static let workResultMaximumTokens = 180
+    static let userTurnResponseGrace: Duration = .milliseconds(450)
 }
 
 enum RealtimeTalkPricing {
-    // Official gpt-realtime-2.1 standard pricing checked on 2026-07-29.
+    // Official gpt-realtime-2.1 standard pricing checked on 2026-08-05.
     private static let inputTextPerMillion = 4.0
     private static let cachedInputPerMillion = 0.4
     private static let inputAudioPerMillion = 32.0
@@ -204,18 +247,29 @@ enum RealtimeTalkPricing {
     }
 }
 
+enum LiveTranscriptionPricing {
+    // Official gpt-live-transcribe standard pricing checked on 2026-08-05.
+    private static let costPerMinute = 0.017
+
+    static func estimatedCostUSD(for usage: UserTurnTranscriptionUsage) -> Double? {
+        guard let audioSeconds = usage.audioSeconds,
+              audioSeconds >= 0 else { return nil }
+        return audioSeconds / 60 * costPerMinute
+    }
+}
+
 enum ConversationPrompt {
     static let openingGreeting = """
-    The user deliberately opened Friday but has not spoken yet. Greet them warmly in one very short spoken sentence, then wait. Do not mention silence, waiting, listening, the microphone, or system status. Do not ask more than one brief question. Use the language most likely appropriate for the current conversation context; when there is no context, use Simplified Chinese.
+    用户主动打开了 Olli，但还没有说话。必须使用简体中文，用一句很短、自然、温和的话打招呼，然后等待。不要提到沉默、等待、监听、麦克风或系统状态；最多问一个简短问题。
     """
 
     static let toolFollowUp = """
-    Respond to the function result in one short natural spoken sentence. If status is accepted, say only that the specific task has started and the user can continue talking. If it is rejected, explain the recoverable reason briefly. Do not call another tool, reveal IDs, or claim unfinished work is complete.
+    使用用户最近一段完整请求的语言，只说一句最短、自然、包含新信息的结果；无法确定语言时使用简体中文。不要复述用户请求、正文或应用名，不介绍能力，不邀请用户继续描述，也不要因为 JSON 或英文系统说明改用英文。写入 succeeded 时只说“写好了”；写入 unknown 时只请用户查看目标输入框；写入 failed、target_unavailable 或 rejected 时只说一个具体可恢复原因。status 为 clarification_required 时只问一个具体问题；awaiting_confirmation 时忠实复述 objective 并请用户说“确认提交”或“取消”；transcript_unavailable 时只说明没有创建任务；accepted 时只说明测试任务已开始；discarded 时只说明草稿已取消。不要透露内部 ID，也不要声称未完成的任务已经完成。
     """
 
     static func completedWork(_ result: String) -> String {
         """
-        This is a trusted completion event from Friday's bounded Work Runtime, not a new user request. Tell the user the actual result in concise natural speech. Do not call tools, reveal internal IDs, add facts, or claim any external action beyond the supplied result.
+        这是 Olli 有限 Work Runtime 发出的可信完成事件，不是新的用户请求。使用用户最近一段完整请求的语言，以简洁自然的口语告诉用户实际结果；无法确定语言时使用简体中文。不要因为结果包含英文、JSON 字段或内部术语而切换语言。不要调用工具、透露内部 ID、补充事实，也不要声称发生了结果之外的任何外部操作。
 
         <work_result>
         \(result)
@@ -227,14 +281,28 @@ enum ConversationPrompt {
 @MainActor
 final class MockConversationProvider: ConversationProviding {
     var onEvent: ((ConversationEvent) -> Void)?
+    let endpointMode: ConversationEndpointMode
+    let allowsResponseInterruption: Bool
     private(set) var isConnected = false
     private(set) var appendedChunkCount = 0
     private(set) var openingGreetingRequestCount = 0
     private(set) var truncations: [(itemID: String, audioEndMilliseconds: Int)] = []
     private(set) var screenContexts: [ConversationImage] = []
+    private(set) var userResponseRequestCount = 0
+    private(set) var clearedUserAudioCount = 0
+    private(set) var discardedUserAudioItemIDs: [String] = []
     private(set) var assistantCancellationCount = 0
-    private(set) var toolOutputs: [(callID: String, output: String)] = []
+    private(set) var toolOutputs: [(callID: String, output: String, createsResponse: Bool)] = []
     private(set) var completedWorkResults: [String] = []
+
+    init(
+        endpointMode: ConversationEndpointMode = .providerVAD,
+        allowsResponseInterruption: Bool? = nil
+    ) {
+        self.endpointMode = endpointMode
+        self.allowsResponseInterruption = allowsResponseInterruption
+            ?? (endpointMode == .clientGate)
+    }
 
     func connect() async throws {
         isConnected = true
@@ -251,15 +319,34 @@ final class MockConversationProvider: ConversationProviding {
         screenContexts.append(image)
     }
 
+    func requestUserResponse() async throws {
+        guard isConnected else { return }
+        userResponseRequestCount += 1
+    }
+
+    func clearPendingUserAudio() async throws {
+        guard isConnected else { return }
+        clearedUserAudioCount += 1
+    }
+
+    func discardUserAudioItem(_ itemID: ConversationProviderItemID) {
+        guard isConnected else { return }
+        discardedUserAudioItemIDs.append(itemID.rawValue)
+    }
+
     func requestOpeningGreeting() {
         guard isConnected else { return }
         openingGreetingRequestCount += 1
         onEvent?(.assistantResponseStarted(responseID: nil))
     }
 
-    func provideToolOutput(callID: ConversationToolCallID, output: String) async throws {
+    func provideToolOutput(
+        callID: ConversationToolCallID,
+        output: String,
+        createsResponse: Bool
+    ) async throws {
         guard isConnected else { return }
-        toolOutputs.append((callID.rawValue, output))
+        toolOutputs.append((callID.rawValue, output, createsResponse))
     }
 
     func presentCompletedWork(_ result: String) async throws {

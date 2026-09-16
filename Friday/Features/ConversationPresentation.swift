@@ -35,19 +35,19 @@ enum ConversationExpression: String, Equatable, CaseIterable {
     var accessibilityLabel: String {
         switch self {
         case .awake:
-            return "Friday 已被唤醒"
+            return "Olli 已被唤醒"
         case .attentive:
-            return "Friday 正在听"
+            return "Olli 正在听"
         case .observing:
-            return "Friday 正在查看你选择的屏幕区域"
+            return "Olli 正在查看你选择的屏幕区域"
         case .speaking:
-            return "Friday 正在说话"
+            return "Olli 正在说话"
         case .interrupted:
-            return "Friday 已停止说话并继续听"
+            return "Olli 已停止说话并继续听"
         case .uncertain:
-            return "Friday 没有听清"
+            return "Olli 没有听清"
         case .resting:
-            return "Friday 正在结束对话"
+            return "Olli 正在结束对话"
         }
     }
 }
@@ -76,6 +76,8 @@ protocol ConversationPresenting: AnyObject {
 final class InputOverlayConversationPresenter: ConversationPresenting {
     private let model: InputOverlayModel
     private let controller: InputOverlayController?
+    private var lastWaveformUpdateTime: TimeInterval = 0
+    private static let waveformUpdateInterval: TimeInterval = 1.0 / 30.0
 
     init(
         model: InputOverlayModel,
@@ -92,6 +94,7 @@ final class InputOverlayConversationPresenter: ConversationPresenting {
         model.audioLevel = 0
         model.isVoiceActive = false
         model.waveformLevels = InputOverlayModel.silentWaveformLevels
+        lastWaveformUpdateTime = 0
         let phase = InputOverlayPhase.conversation(
             expression: expression,
             source: source
@@ -102,21 +105,20 @@ final class InputOverlayConversationPresenter: ConversationPresenting {
 
     func updateWaveform(
         _ levels: ConversationAudioLevels,
-        source: ConversationWaveformSource
+        source _: ConversationWaveformSource
     ) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard levels.level == 0
+                || now - lastWaveformUpdateTime >= Self.waveformUpdateInterval else {
+            return
+        }
+        lastWaveformUpdateTime = now
         model.audioLevel = levels.level
         model.isVoiceActive = AudioLevelMeter.hasVisualActivity(levels.level)
         model.waveformLevels = levels.waveformLevels
 
-        let expression: ConversationExpression = source == .assistant
-            ? .speaking
-            : .attentive
-        let phase = InputOverlayPhase.conversation(
-            expression: expression,
-            source: source
-        )
-        model.phase = phase
-        controller?.show(phase)
+        // State transitions own the window. Audio arrives many times per second,
+        // so a meter update must not recalculate, resize, or re-order the panel.
     }
 
     func hide() {
